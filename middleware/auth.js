@@ -1,4 +1,4 @@
-const AuthService = require('../services/authService');
+const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 
 /**
@@ -19,11 +19,12 @@ const authenticate = async (req, res, next) => {
         const token = authHeader.split(' ')[1];
 
         // Verify token
-        const decoded = AuthService.verifyToken(token);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Get user from database
         const [rows] = await pool.query(
-            'SELECT id, first_name, last_name, email, phone, is_active FROM users WHERE id = ?',
+            `SELECT id, name, email, role, department, profile_picture, active_status, is_active 
+             FROM users WHERE id = ?`,
             [decoded.id]
         );
 
@@ -39,10 +40,12 @@ const authenticate = async (req, res, next) => {
         // Attach user to request
         req.user = {
             id: user.id,
-            firstName: user.first_name,
-            lastName: user.last_name,
+            name: user.name,
             email: user.email,
-            phone: user.phone
+            role: user.role,
+            department: user.department,
+            profile_picture: user.profile_picture,
+            active_status: user.active_status
         };
 
         next();
@@ -50,10 +53,17 @@ const authenticate = async (req, res, next) => {
     } catch (error) {
         console.error('Auth middleware error:', error);
 
-        if (error.statusCode === 401) {
+        if (error.name === 'TokenExpiredError') {
             return res.status(401).json({
                 success: false,
-                message: error.message
+                message: 'Token expired'
+            });
+        }
+
+        if (error.name === 'JsonWebTokenError') {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid token'
             });
         }
 
@@ -64,4 +74,17 @@ const authenticate = async (req, res, next) => {
     }
 };
 
-module.exports = { authenticate };
+/**
+ * Admin only middleware
+ */
+const adminOnly = (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({
+            success: false,
+            message: 'Admin access required'
+        });
+    }
+    next();
+};
+
+module.exports = { authenticate, adminOnly };

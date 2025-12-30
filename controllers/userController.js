@@ -1,81 +1,17 @@
-const UserService = require('../services/userService');
+const UserModel = require('../models/userModel');
 
+/**
+ * User Controller - Handles user profile operations
+ */
 class UserController {
-
-    /**
-     * Register a new user
-     * POST /api/users/register
-     */
-    static async register(req, res) {
-        try {
-            const { firstName, lastName, email, password, phone } = req.body;
-
-            // Call service to register user
-            const user = await UserService.registerUser({
-                firstName,
-                lastName,
-                email,
-                password,
-                phone
-            });
-
-            res.status(201).json({
-                success: true,
-                message: 'User registered successfully',
-                data: user
-            });
-
-        } catch (error) {
-            console.error('Registration error:', error);
-
-            // Handle known errors with status codes
-            if (error.statusCode) {
-                return res.status(error.statusCode).json({
-                    success: false,
-                    message: error.message
-                });
-            }
-
-            res.status(500).json({
-                success: false,
-                message: 'Internal server error. Please try again later.'
-            });
-        }
-    }
-
-    /**
-     * Get all users
-     * GET /api/users
-     */
-    static async getAllUsers(req, res) {
-        try {
-            const users = await UserService.getAllUsers();
-
-            res.status(200).json({
-                success: true,
-                message: 'Users retrieved successfully',
-                count: users.length,
-                data: users
-            });
-
-        } catch (error) {
-            console.error('Get users error:', error);
-            res.status(500).json({
-                success: false,
-                message: 'Internal server error. Please try again later.'
-            });
-        }
-    }
 
     /**
      * Get user by ID
      * GET /api/users/:id
      */
-    static async getUserById(req, res) {
+    static async getById(req, res) {
         try {
-            const { id } = req.params;
-            const user = await UserService.findById(id);
-
+            const user = await UserModel.findById(req.params.id);
             if (!user) {
                 return res.status(404).json({
                     success: false,
@@ -85,104 +21,192 @@ class UserController {
 
             res.status(200).json({
                 success: true,
-                message: 'User retrieved successfully',
                 data: user
             });
-
         } catch (error) {
             console.error('Get user error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Internal server error. Please try again later.'
+                message: 'Failed to get user',
+                error: error.message
             });
         }
     }
 
     /**
-     * Update user by ID
+     * Get all users
+     * GET /api/users
+     */
+    static async getAll(req, res) {
+        try {
+            const users = await UserModel.findAll();
+            res.status(200).json({
+                success: true,
+                data: users
+            });
+        } catch (error) {
+            console.error('Get all users error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get users',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Search users
+     * GET /api/users/search?q=
+     */
+    static async search(req, res) {
+        try {
+            const query = req.query.q;
+            if (!query) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Search query is required'
+                });
+            }
+
+            const users = await UserModel.search(query, req.user.id);
+            res.status(200).json({
+                success: true,
+                data: users
+            });
+        } catch (error) {
+            console.error('Search users error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to search users',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Update user profile
      * PUT /api/users/:id
      */
-    static async updateUser(req, res) {
+    static async update(req, res) {
         try {
-            const { id } = req.params;
-            const { firstName, lastName, phone } = req.body;
+            const userId = parseInt(req.params.id);
 
-            // Check if user exists
-            const existingUser = await UserService.findById(id);
-            if (!existingUser) {
+            // Users can only update their own profile
+            if (userId !== req.user.id) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You can only update your own profile'
+                });
+            }
+
+            const { name, department } = req.body;
+            const updated = await UserModel.update(userId, { name, department });
+
+            if (!updated) {
                 return res.status(404).json({
                     success: false,
-                    message: 'User not found'
+                    message: 'User not found or no changes made'
                 });
             }
 
-            // Update user
-            const updated = await UserService.updateUser(id, {
-                firstName,
-                lastName,
-                phone
+            const user = await UserModel.findById(userId);
+            res.status(200).json({
+                success: true,
+                message: 'Profile updated successfully',
+                data: user
             });
-
-            if (updated) {
-                const updatedUser = await UserService.findById(id);
-                res.status(200).json({
-                    success: true,
-                    message: 'User updated successfully',
-                    data: updatedUser
-                });
-            } else {
-                res.status(400).json({
-                    success: false,
-                    message: 'Failed to update user'
-                });
-            }
-
         } catch (error) {
             console.error('Update user error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Internal server error. Please try again later.'
+                message: 'Failed to update profile',
+                error: error.message
             });
         }
     }
 
     /**
-     * Delete user by ID (soft delete)
-     * DELETE /api/users/:id
+     * Update user status
+     * PUT /api/users/:id/status
      */
-    static async deleteUser(req, res) {
+    static async updateStatus(req, res) {
         try {
-            const { id } = req.params;
+            const userId = parseInt(req.params.id);
 
-            // Check if user exists
-            const existingUser = await UserService.findById(id);
-            if (!existingUser) {
+            if (userId !== req.user.id) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You can only update your own status'
+                });
+            }
+
+            const { status } = req.body;
+            const validStatuses = ['available', 'away', 'dnd'];
+
+            if (!status || !validStatuses.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid status. Use: available, away, or dnd'
+                });
+            }
+
+            const updated = await UserModel.updateStatus(userId, status);
+            if (!updated) {
                 return res.status(404).json({
                     success: false,
                     message: 'User not found'
                 });
             }
 
-            // Soft delete user
-            const deleted = await UserService.deleteUser(id);
+            res.status(200).json({
+                success: true,
+                message: 'Status updated successfully',
+                data: { status }
+            });
+        } catch (error) {
+            console.error('Update status error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to update status',
+                error: error.message
+            });
+        }
+    }
 
-            if (deleted) {
-                res.status(200).json({
-                    success: true,
-                    message: 'User deleted successfully'
-                });
-            } else {
-                res.status(400).json({
+    /**
+     * Delete user (soft delete)
+     * DELETE /api/users/:id
+     */
+    static async delete(req, res) {
+        try {
+            const userId = parseInt(req.params.id);
+
+            // Only admins can delete other users
+            if (userId !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({
                     success: false,
-                    message: 'Failed to delete user'
+                    message: 'You are not authorized to delete this user'
                 });
             }
 
+            const deleted = await UserModel.softDelete(userId);
+            if (!deleted) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                message: 'User deleted successfully'
+            });
         } catch (error) {
             console.error('Delete user error:', error);
             res.status(500).json({
                 success: false,
-                message: 'Internal server error. Please try again later.'
+                message: 'Failed to delete user',
+                error: error.message
             });
         }
     }

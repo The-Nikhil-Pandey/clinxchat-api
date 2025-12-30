@@ -1,22 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const UserController = require('../controllers/userController');
-const { registerValidation } = require('../middleware/validation');
-const { handleValidationErrors } = require('../middleware/errorHandler');
+const { authenticate } = require('../middleware/auth');
 
-// POST /api/users/register - Register a new user
-router.post('/register', registerValidation, handleValidationErrors, UserController.register);
+// All routes require authentication
+router.use(authenticate);
 
-// GET /api/users - Get all users
-router.get('/', UserController.getAllUsers);
+// Search users (must be before /:id)
+router.get('/search', UserController.search);
 
-// GET /api/users/:id - Get user by ID
-router.get('/:id', UserController.getUserById);
-
-// PUT /api/users/:id - Update user by ID
-router.put('/:id', UserController.updateUser);
-
-// DELETE /api/users/:id - Delete user by ID (soft delete)
-router.delete('/:id', UserController.deleteUser);
+// User CRUD
+router.get('/', UserController.getAll);
+router.get('/:id', UserController.getById);
+router.put('/:id', UserController.update);
+router.put('/:id/status', UserController.updateStatus);
+router.delete('/:id', UserController.delete);
 
 module.exports = router;
