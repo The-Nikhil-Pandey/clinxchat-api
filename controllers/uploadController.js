@@ -128,6 +128,7 @@ class UploadController {
     /**
      * Upload group image
      * POST /api/upload/group-image
+     * Can be used with or without groupId - if groupId is provided, group image is updated
      */
     static async uploadGroupImage(req, res) {
         try {
@@ -139,32 +140,36 @@ class UploadController {
             }
 
             const groupId = req.body.groupId || req.params.groupId || req.params.id;
-            if (!groupId) {
-                fs.unlinkSync(req.file.path);
-                return res.status(400).json({
-                    success: false,
-                    message: 'Group ID is required'
-                });
-            }
 
             const filePath = req.file.path.replace(/\\/g, '/');
             const relativePath = filePath.replace(UPLOAD_PATH.replace('./', ''), '');
 
-            // Update group image
-            const GroupModel = require('../models/groupModel');
-            await GroupModel.update(parseInt(groupId), {
-                image: relativePath
-            });
+            // If groupId is provided, update the group image
+            if (groupId) {
+                const GroupModel = require('../models/groupModel');
+                await GroupModel.update(parseInt(groupId), {
+                    image: relativePath
+                });
 
-            // Save file record
-            await FileModel.create({
-                userId: req.user.id,
-                groupId: parseInt(groupId),
-                fileType: 'group_cover',
-                filePath: relativePath,
-                originalName: req.file.originalname,
-                fileSize: req.file.size
-            });
+                // Save file record
+                await FileModel.create({
+                    userId: req.user.id,
+                    groupId: parseInt(groupId),
+                    fileType: 'group_cover',
+                    filePath: relativePath,
+                    originalName: req.file.originalname,
+                    fileSize: req.file.size
+                });
+            } else {
+                // Just save file record without group association (for pre-creation uploads)
+                await FileModel.create({
+                    userId: req.user.id,
+                    fileType: 'group_cover',
+                    filePath: relativePath,
+                    originalName: req.file.originalname,
+                    fileSize: req.file.size
+                });
+            }
 
             res.status(200).json({
                 success: true,

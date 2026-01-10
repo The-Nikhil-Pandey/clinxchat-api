@@ -3,7 +3,12 @@ const router = express.Router();
 const AuthController = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 
-// Public routes
+// Public routes - OTP flow
+router.post('/register/initiate', AuthController.initiateRegistration);
+router.post('/register/verify-otp', AuthController.verifyOtpAndRegister);
+router.post('/register/resend-otp', AuthController.resendOtp);
+
+// Legacy register (backward compatibility)
 router.post('/register', AuthController.register);
 router.post('/login', AuthController.login);
 

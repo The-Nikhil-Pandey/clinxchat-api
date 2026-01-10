@@ -24,8 +24,10 @@ router.put('/:id/permissions', GroupController.updatePermissions);
 
 // Group messages
 router.post('/:id/messages', GroupController.sendMessage);
+router.get('/:id/messages', GroupController.getMessages);
 
 // Group media
 router.get('/:groupId/media', GroupController.getGroupMedia);
 
 module.exports = router;
+

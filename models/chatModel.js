@@ -137,7 +137,7 @@ class ChatModel {
             ) DESC
         `, [userId, userId]);
 
-        // Get participant info for private chats
+        // Get participant info for private chats and group info for group chats
         for (let chat of rows) {
             if (chat.type === 'private') {
                 const [participants] = await pool.query(`
@@ -147,6 +147,15 @@ class ChatModel {
                     WHERE cp.chat_id = ? AND u.id != ?
                 `, [chat.id, userId]);
                 chat.participant = participants[0] || null;
+            } else if (chat.type === 'group' && chat.group_id) {
+                // Get group info for group chats
+                const [groups] = await pool.query(`
+                    SELECT g.id, g.name, g.description, g.image, g.created_by, g.disappearing_days,
+                           (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
+                    FROM \`groups\` g
+                    WHERE g.id = ?
+                `, [chat.group_id]);
+                chat.group = groups[0] || null;
             }
             if (chat.last_message) {
                 // Only parse if it's a string, not already an object

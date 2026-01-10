@@ -1,14 +1,204 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const UserModel = require('../models/userModel');
+const OtpModel = require('../models/otpModel');
+const { sendOtpEmail, generateOtp } = require('../config/email');
 
 /**
- * Auth Controller - Handles authentication operations
+ * Auth Controller - Handles authentication operations with OTP verification
  */
 class AuthController {
 
     /**
-     * Register new user
+     * Step 1: Initiate Registration - Send OTP to email
+     * POST /api/auth/register/initiate
+     */
+    static async initiateRegistration(req, res) {
+        try {
+            const { name, email, password } = req.body;
+
+            // Validate required fields
+            if (!name || !email || !password) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Name, email and password are required'
+                });
+            }
+
+            // Validate email format
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Please enter a valid email address'
+                });
+            }
+
+            // Validate password (min 8 chars, must contain letters and numbers)
+            if (password.length < 8) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Password must be at least 8 characters long'
+                });
+            }
+
+            const hasLetters = /[a-zA-Z]/.test(password);
+            const hasNumbers = /[0-9]/.test(password);
+
+            if (!hasLetters || !hasNumbers) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Password must contain both letters and numbers'
+                });
+            }
+
+            // Check if email already exists
+            const emailExists = await UserModel.emailExists(email);
+            if (emailExists) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email already registered'
+                });
+            }
+
+            // Generate OTP (5 digits)
+            const otp = generateOtp(5);
+
+            // Save OTP to database
+            await OtpModel.create(email, otp, 5); // 5 minutes expiry
+
+            // Send OTP via email
+            await sendOtpEmail(email, otp);
+
+            res.status(200).json({
+                success: true,
+                message: 'OTP sent to your email',
+                data: {
+                    email,
+                    expiresIn: 300 // 5 minutes in seconds
+                }
+            });
+        } catch (error) {
+            console.error('Initiate registration error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to send OTP',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Step 2: Verify OTP and Complete Registration
+     * POST /api/auth/register/verify-otp
+     */
+    static async verifyOtpAndRegister(req, res) {
+        try {
+            const { name, email, password, otp, role, department } = req.body;
+
+            // Validate required fields
+            if (!email || !otp || !name || !password) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email, OTP, name and password are required'
+                });
+            }
+
+            // Verify OTP
+            const otpResult = await OtpModel.verify(email, otp);
+            if (!otpResult.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: otpResult.message
+                });
+            }
+
+            // Hash password
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(password, salt);
+
+            // Create user (but profile not completed yet)
+            const user = await UserModel.create({
+                name,
+                email,
+                hashedPassword,
+                role: role || 'clinical_staff',
+                department
+            });
+
+            // Generate token
+            const token = jwt.sign(
+                { id: user.id, email: user.email, role: user.role },
+                process.env.JWT_SECRET,
+                { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+            );
+
+            // Clean up OTP
+            await OtpModel.deleteByEmail(email);
+
+            res.status(201).json({
+                success: true,
+                message: 'Email verified successfully',
+                data: {
+                    user,
+                    token,
+                    profileCompleted: false // Frontend will redirect to profile completion
+                }
+            });
+        } catch (error) {
+            console.error('Verify OTP error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Verification failed',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Resend OTP
+     * POST /api/auth/register/resend-otp
+     */
+    static async resendOtp(req, res) {
+        try {
+            const { email } = req.body;
+
+            if (!email) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email is required'
+                });
+            }
+
+            // Generate new OTP
+            const otp = generateOtp(5);
+
+            // Save OTP to database (this will delete old OTP)
+            await OtpModel.create(email, otp, 5);
+
+            // Send OTP via email
+            await sendOtpEmail(email, otp);
+
+            res.status(200).json({
+                success: true,
+                message: 'OTP resent successfully',
+                data: {
+                    email,
+                    expiresIn: 300
+                }
+            });
+        } catch (error) {
+            console.error('Resend OTP error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to resend OTP',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Legacy register (for backward compatibility)
      * POST /api/auth/register
      */
     static async register(req, res) {
@@ -156,8 +346,6 @@ class AuthController {
      */
     static async logout(req, res) {
         try {
-            // In a stateless JWT setup, logout is handled client-side
-            // Here we just acknowledge the request
             res.status(200).json({
                 success: true,
                 message: 'Logged out successfully'

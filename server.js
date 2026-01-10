@@ -7,6 +7,8 @@ require('dotenv').config();
 
 const { testConnection, initializeDatabase } = require('./config/db');
 const { initializeSocket } = require('./services/socketHandler');
+const { initializeEmail } = require('./config/email');
+const OtpModel = require('./models/otpModel');
 
 // Import routes
 const authRoutes = require('./routes/authRoutes');
@@ -188,6 +190,12 @@ const startServer = async () => {
     try {
         // Initialize database and create tables
         await initializeDatabase();
+
+        // Initialize OTP table
+        await OtpModel.initialize();
+
+        // Initialize email transporter
+        initializeEmail();
 
         // Test database connection
         await testConnection();

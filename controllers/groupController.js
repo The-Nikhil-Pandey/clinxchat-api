@@ -31,7 +31,14 @@ class GroupController {
             });
 
             // Create group chat
-            await ChatModel.createGroupChat(group.id);
+            const chatId = await ChatModel.createGroupChat(group.id);
+
+            // Add creator to chat participants so the group shows on their home screen
+            const { pool } = require('../config/db');
+            await pool.query(
+                'INSERT INTO chat_participants (chat_id, user_id) VALUES (?, ?)',
+                [chatId, req.user.id]
+            );
 
             res.status(201).json({
                 success: true,
@@ -245,6 +252,40 @@ class GroupController {
                     'INSERT IGNORE INTO chat_participants (chat_id, user_id) VALUES (?, ?)',
                     [chat.id, userId]
                 );
+            }
+
+            // Get group info for notification
+            const group = await GroupModel.findById(groupId);
+            const addedBy = await UserModel.findById(req.user.id);
+
+            // Send notification to the added member
+            const NotificationModel = require('../models/notificationModel');
+            const notification = await NotificationModel.create({
+                userId: userId,
+                type: 'group_invite',
+                title: 'Added to Group',
+                message: `${addedBy.name} added you to the group "${group.name}"`,
+                data: {
+                    groupId: groupId,
+                    groupName: group.name,
+                    groupImage: group.image,
+                    addedBy: req.user.id,
+                    addedByName: addedBy.name,
+                    chatId: chat ? chat.id : null
+                }
+            });
+
+            // Emit socket event to the added user so they get real-time update
+            if (req.app.get('io')) {
+                // Send notification to the user
+                req.app.get('io').to(`user:${userId}`).emit('notification', notification);
+
+                // Also tell them to refresh their chats
+                req.app.get('io').to(`user:${userId}`).emit('group_added', {
+                    groupId: groupId,
+                    group: group,
+                    chatId: chat ? chat.id : null
+                });
             }
 
             res.status(201).json({
@@ -544,6 +585,55 @@ class GroupController {
             });
         }
     }
+
+    /**
+     * Get group messages
+     * GET /api/groups/:id/messages
+     */
+    static async getMessages(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+            const limit = parseInt(req.query.limit) || 50;
+            const offset = parseInt(req.query.offset) || 0;
+
+            // Check membership
+            const membership = await GroupModel.isMember(groupId, req.user.id);
+            if (!membership) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You are not a member of this group'
+                });
+            }
+
+            // Get group chat
+            const chat = await ChatModel.findByGroupId(groupId);
+            if (!chat) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Group chat not found'
+                });
+            }
+
+            // Get messages
+            const messages = await MessageModel.findByChatId(chat.id, limit, offset);
+
+            res.status(200).json({
+                success: true,
+                data: {
+                    chatId: chat.id,
+                    messages
+                }
+            });
+        } catch (error) {
+            console.error('Get group messages error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get messages',
+                error: error.message
+            });
+        }
+    }
 }
 
 module.exports = GroupController;
+
