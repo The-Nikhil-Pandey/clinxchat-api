@@ -14,7 +14,7 @@ class GroupController {
      */
     static async create(req, res) {
         try {
-            const { name, description, disappearingDays } = req.body;
+            const { name, description, disappearingDays, groupType, permissions } = req.body;
 
             if (!name) {
                 return res.status(400).json({
@@ -27,7 +27,8 @@ class GroupController {
                 name,
                 description,
                 createdBy: req.user.id,
-                disappearingDays: disappearingDays || 0
+                disappearingDays: disappearingDays || 0,
+                groupType: groupType || 'public'
             });
 
             // Create group chat
@@ -39,6 +40,20 @@ class GroupController {
                 'INSERT INTO chat_participants (chat_id, user_id) VALUES (?, ?)',
                 [chatId, req.user.id]
             );
+
+            // Update permissions if provided during creation
+            if (permissions && Object.keys(permissions).length > 0) {
+                await GroupModel.updatePermissions(group.id, permissions);
+            }
+
+            // Emit to creator to refresh their dashboard/chat list
+            if (req.app.get('io')) {
+                req.app.get('io').to(`user:${req.user.id}`).emit('group_added', {
+                    groupId: group.id,
+                    group: group,
+                    chatId: chatId
+                });
+            }
 
             res.status(201).json({
                 success: true,
@@ -110,12 +125,13 @@ class GroupController {
         try {
             const groupId = parseInt(req.params.id);
 
-            // Check if user is admin
+            // Check if user is admin OR permissions allow editing
             const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
-            if (!isAdmin) {
+            const perms = await GroupModel.getPermissions(groupId);
+            if (!isAdmin && !(perms && perms.edit_settings)) {
                 return res.status(403).json({
                     success: false,
-                    message: 'Only admins can update group settings'
+                    message: 'Only admins or users with edit permission can update group settings'
                 });
             }
 
@@ -215,12 +231,13 @@ class GroupController {
                 });
             }
 
-            // Check if requester is admin or moderator
+            // Check permissions: admin/mod or add_members permission
             const isAdminOrMod = await GroupModel.isAdminOrModerator(groupId, req.user.id);
-            if (!isAdminOrMod) {
+            const perms = await GroupModel.getPermissions(groupId);
+            if (!isAdminOrMod && !(perms && perms.add_members)) {
                 return res.status(403).json({
                     success: false,
-                    message: 'Only admins and moderators can add members'
+                    message: 'Only admins, moderators or permissioned users can add members'
                 });
             }
 
@@ -240,6 +257,27 @@ class GroupController {
                     success: false,
                     message: 'User is already a member'
                 });
+            }
+
+            // If group requires admin approval and requester is not admin, create a join request instead
+            if (perms && perms.admin_approval && !isAdminOrMod) {
+                const requestId = await GroupModel.createJoinRequest(groupId, userId);
+
+                // Notify admins about the join request
+                const NotificationModel = require('../models/notificationModel');
+                const admins = await GroupModel.getMembers(groupId);
+                const adminUsers = admins.filter(a => a.role === 'admin');
+                for (const admin of adminUsers) {
+                    await NotificationModel.create({
+                        userId: admin.id,
+                        type: 'group_join_request',
+                        title: 'Join Request',
+                        message: `${req.user.name} requested to join "${(await GroupModel.findById(groupId)).name}"`,
+                        data: { groupId, requestId }
+                    });
+                }
+
+                return res.status(202).json({ success: true, message: 'Join request submitted' });
             }
 
             await GroupModel.addMember(groupId, userId, role || 'member');
@@ -435,6 +473,128 @@ class GroupController {
     }
 
     /**
+     * Request to join group (used when admin approval required)
+     * POST /api/groups/:id/join-request
+     */
+    static async joinRequest(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+
+            // Check if already a member
+            const existing = await GroupModel.isMember(groupId, req.user.id);
+            if (existing) {
+                return res.status(400).json({ success: false, message: 'You are already a member' });
+            }
+
+            const perms = await GroupModel.getPermissions(groupId);
+            if (!perms) {
+                return res.status(404).json({ success: false, message: 'Group permissions not found' });
+            }
+
+            if (!perms.admin_approval) {
+                // If admin approval not required, add directly
+                await GroupModel.addMember(groupId, req.user.id, 'member');
+                const chat = await ChatModel.findByGroupId(groupId);
+                if (chat) {
+                    const { pool } = require('../config/db');
+                    await pool.query('INSERT IGNORE INTO chat_participants (chat_id, user_id) VALUES (?, ?)', [chat.id, req.user.id]);
+                }
+                return res.status(201).json({ success: true, message: 'Joined group' });
+            }
+
+            // Create join request
+            await GroupModel.createJoinRequest(groupId, req.user.id);
+
+            // Notify admins
+            const admins = await GroupModel.getMembers(groupId);
+            const NotificationModel = require('../models/notificationModel');
+            const group = await GroupModel.findById(groupId);
+            for (const admin of admins.filter(a => a.role === 'admin')) {
+                await NotificationModel.create({
+                    userId: admin.id,
+                    type: 'group_join_request',
+                    title: 'Join Request',
+                    message: `${req.user.name} requested to join "${group.name}"`,
+                    data: { groupId }
+                });
+            }
+
+            res.status(202).json({ success: true, message: 'Join request submitted' });
+        } catch (error) {
+            console.error('Join request error:', error);
+            res.status(500).json({ success: false, message: 'Failed to submit join request', error: error.message });
+        }
+    }
+
+    /**
+     * List pending join requests (admin only)
+     * GET /api/groups/:id/requests
+     */
+    static async listJoinRequests(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            if (!isAdmin) return res.status(403).json({ success: false, message: 'Admin only' });
+
+            const requests = await GroupModel.getJoinRequests(groupId);
+            res.status(200).json({ success: true, data: requests });
+        } catch (error) {
+            console.error('List join requests error:', error);
+            res.status(500).json({ success: false, message: 'Failed to list join requests', error: error.message });
+        }
+    }
+
+    /**
+     * Approve a join request
+     * POST /api/groups/:id/requests/:requestId/approve
+     */
+    static async approveJoinRequest(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+            const requestId = parseInt(req.params.requestId);
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            if (!isAdmin) return res.status(403).json({ success: false, message: 'Admin only' });
+
+            // Get request
+            const [rows] = await require('../config/db').pool.query('SELECT * FROM group_join_requests WHERE id = ? AND group_id = ?', [requestId, groupId]);
+            if (!rows[0]) return res.status(404).json({ success: false, message: 'Request not found' });
+            const reqRow = rows[0];
+
+            // Add member
+            await GroupModel.addMember(groupId, reqRow.user_id, 'member');
+            await GroupModel.updateJoinRequestStatus(requestId, 'approved');
+
+            // Notify user
+            const NotificationModel = require('../models/notificationModel');
+            await NotificationModel.create({ userId: reqRow.user_id, type: 'group_join_approved', title: 'Request Approved', message: `Your request to join group was approved`, data: { groupId } });
+
+            res.status(200).json({ success: true, message: 'Request approved' });
+        } catch (error) {
+            console.error('Approve join request error:', error);
+            res.status(500).json({ success: false, message: 'Failed to approve request', error: error.message });
+        }
+    }
+
+    /**
+     * Reject a join request
+     * POST /api/groups/:id/requests/:requestId/reject
+     */
+    static async rejectJoinRequest(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+            const requestId = parseInt(req.params.requestId);
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            if (!isAdmin) return res.status(403).json({ success: false, message: 'Admin only' });
+
+            await GroupModel.updateJoinRequestStatus(requestId, 'rejected');
+            res.status(200).json({ success: true, message: 'Request rejected' });
+        } catch (error) {
+            console.error('Reject join request error:', error);
+            res.status(500).json({ success: false, message: 'Failed to reject request', error: error.message });
+        }
+    }
+
+    /**
      * Update group permissions
      * PUT /api/groups/:id/permissions
      */
@@ -453,6 +613,11 @@ class GroupController {
             await GroupModel.updatePermissions(groupId, req.body);
             const permissions = await GroupModel.getPermissions(groupId);
 
+            // Emit socket event so clients in the group are updated instantly
+            if (req.app.get('io')) {
+                req.app.get('io').to(`group:${groupId}`).emit('group_permissions_updated', { groupId, permissions });
+            }
+
             res.status(200).json({
                 success: true,
                 message: 'Permissions updated successfully',
@@ -465,6 +630,133 @@ class GroupController {
                 message: 'Failed to update permissions',
                 error: error.message
             });
+        }
+    }
+
+    /**
+     * Invite link management
+     */
+    static async createInvite(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+
+            // Only admins or permissioned users can create invite links
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            const perms = await GroupModel.getPermissions(groupId);
+            if (!isAdmin && !(perms && perms.invite_link)) {
+                return res.status(403).json({ success: false, message: 'Not allowed to create invite links' });
+            }
+
+            // Generate a random token
+            const crypto = require('crypto');
+            const token = crypto.randomBytes(16).toString('hex');
+
+            // Optional expiry in body (ISO string)
+            let expiresAt = null;
+            if (req.body.expiresAt) {
+                expiresAt = new Date(req.body.expiresAt);
+            }
+
+            const inviteId = await GroupModel.createInviteLink(groupId, token, expiresAt, req.user.id);
+
+            const inviteUrl = `${process.env.APP_URL || (req.protocol + '://' + req.get('host'))}/groups/join/${token}`;
+
+            res.status(201).json({ success: true, data: { id: inviteId, token, url: inviteUrl, expiresAt } });
+        } catch (error) {
+            console.error('Create invite error:', error);
+            res.status(500).json({ success: false, message: 'Failed to create invite', error: error.message });
+        }
+    }
+
+    static async listInvites(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            if (!isAdmin) return res.status(403).json({ success: false, message: 'Admin only' });
+
+            const invites = await GroupModel.getInviteLinks(groupId);
+            res.status(200).json({ success: true, data: invites });
+        } catch (error) {
+            console.error('List invites error:', error);
+            res.status(500).json({ success: false, message: 'Failed to list invites', error: error.message });
+        }
+    }
+
+    static async deleteInvite(req, res) {
+        try {
+            const groupId = parseInt(req.params.id);
+            const inviteId = parseInt(req.params.inviteId);
+
+            const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
+            if (!isAdmin) return res.status(403).json({ success: false, message: 'Admin only' });
+
+            const deleted = await GroupModel.deleteInviteLink(inviteId);
+            if (!deleted) return res.status(404).json({ success: false, message: 'Invite not found' });
+
+            res.status(200).json({ success: true, message: 'Invite deleted' });
+        } catch (error) {
+            console.error('Delete invite error:', error);
+            res.status(500).json({ success: false, message: 'Failed to delete invite', error: error.message });
+        }
+    }
+
+    static async joinByToken(req, res) {
+        try {
+            const token = req.params.token;
+            const invite = await GroupModel.findInviteByToken(token);
+            if (!invite) return res.status(404).json({ success: false, message: 'Invalid invite token' });
+
+            if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+                return res.status(410).json({ success: false, message: 'Invite has expired' });
+            }
+
+            const groupId = invite.group_id;
+
+            // Check if already a member
+            const existing = await GroupModel.isMember(groupId, req.user.id);
+            if (existing) return res.status(400).json({ success: false, message: 'You are already a member' });
+
+            const perms = await GroupModel.getPermissions(groupId);
+            if (perms && perms.admin_approval) {
+                // Create a join request instead
+                const requestId = await GroupModel.createJoinRequest(groupId, req.user.id);
+
+                // Notify admins
+                const admins = await GroupModel.getMembers(groupId);
+                const NotificationModel = require('../models/notificationModel');
+                const group = await GroupModel.findById(groupId);
+                for (const admin of admins.filter(a => a.role === 'admin')) {
+                    await NotificationModel.create({ userId: admin.id, type: 'group_join_request', title: 'Join Request', message: `${req.user.name} requested to join "${group.name}" via invite`, data: { groupId, requestId } });
+                }
+
+                return res.status(202).json({ success: true, message: 'Join request submitted' });
+            }
+
+            // Add directly
+            await GroupModel.addMember(groupId, req.user.id, 'member');
+
+            // Add to chat participants
+            const chat = await ChatModel.findByGroupId(groupId);
+            if (chat) {
+                const { pool } = require('../config/db');
+                await pool.query('INSERT IGNORE INTO chat_participants (chat_id, user_id) VALUES (?, ?)', [chat.id, req.user.id]);
+            }
+
+            // Notify user
+            const NotificationModel = require('../models/notificationModel');
+            const group = await GroupModel.findById(groupId);
+            await NotificationModel.create({ userId: req.user.id, type: 'group_joined', title: 'Joined Group', message: `You joined the group "${group.name}"`, data: { groupId } });
+
+            // Emit group_added to the user
+            if (req.app.get('io')) {
+                req.app.get('io').to(`user:${req.user.id}`).emit('group_added', { groupId, group, chatId: chat ? chat.id : null });
+            }
+
+            res.status(201).json({ success: true, message: 'Joined group', data: { groupId } });
+        } catch (error) {
+            console.error('Join by token error:', error);
+            res.status(500).json({ success: false, message: 'Failed to join by token', error: error.message });
         }
     }
 

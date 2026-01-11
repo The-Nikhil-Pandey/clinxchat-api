@@ -122,8 +122,16 @@ const initializeSocket = (io) => {
         });
 
         // Handle message seen
-        socket.on('message_seen', (data) => {
+        socket.on('message_seen', async (data) => {
             const { chatId, receiverId, groupId } = data;
+
+            try {
+                // Mark messages as seen in DB for this chat
+                const MessageModel = require('../models/messageModel');
+                await MessageModel.markAsSeen(chatId, userId);
+            } catch (e) {
+                console.error('Failed to mark messages as seen:', e.message || e);
+            }
 
             if (groupId) {
                 socket.to(`group:${groupId}`).emit('message_seen', {
@@ -137,6 +145,23 @@ const initializeSocket = (io) => {
                     chatId,
                     userId
                 });
+            }
+        });
+
+        // Handle message received (delivery ack from recipient)
+        socket.on('message_received', async (data) => {
+            const { messageId, chatId, senderId } = data;
+            try {
+                const MessageModel = require('../models/messageModel');
+                const updated = await MessageModel.setDelivered(messageId);
+                if (updated) {
+                    // Notify sender that message was delivered
+                    if (senderId) {
+                        socket.to(`user:${senderId}`).emit('message_delivered', { messageId, chatId });
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to set message delivered:', e.message || e);
             }
         });
 

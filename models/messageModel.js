@@ -61,6 +61,14 @@ class MessageModel {
         return result.affectedRows;
     }
 
+    static async setDelivered(messageId) {
+        const [result] = await pool.query(
+            `UPDATE messages SET delivered_at = CURRENT_TIMESTAMP WHERE id = ? AND delivered_at IS NULL`,
+            [messageId]
+        );
+        return result.affectedRows;
+    }
+
     /**
      * Get unread count for user in a chat
      */

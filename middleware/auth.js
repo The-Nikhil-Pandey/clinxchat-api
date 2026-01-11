@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { pool } = require('../config/db');
+const { pool, queryWithRetry } = require('../config/db');
 
 /**
  * Authentication middleware to protect routes
@@ -20,9 +20,10 @@ const authenticate = async (req, res, next) => {
 
         // Verify token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        console.log('Decoded token in auth middleware:', decoded);
 
-        // Get user from database
-        const [rows] = await pool.query(
+        // Get user from database (use queryWithRetry to handle transient DB errors)
+        const [rows] = await require('../config/db').queryWithRetry(
             `SELECT id, name, email, role, department, profile_picture, active_status, is_active 
              FROM users WHERE id = ?`,
             [decoded.id]
@@ -64,6 +65,15 @@ const authenticate = async (req, res, next) => {
             return res.status(401).json({
                 success: false,
                 message: 'Invalid token'
+            });
+        }
+
+        // Handle DB transient errors more gracefully
+        const transientCodes = ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE'];
+        if (error && error.code && transientCodes.includes(error.code)) {
+            return res.status(503).json({
+                success: false,
+                message: 'Database connection error, please try again shortly'
             });
         }
 

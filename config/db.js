@@ -25,6 +25,44 @@ const testConnection = async () => {
     }
 };
 
+// Helpers to handle transient DB errors and retry queries
+const isTransientError = (err) => {
+    if (!err || !err.code) return false;
+    const transientCodes = ['ECONNRESET', 'PROTOCOL_CONNECTION_LOST', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE'];
+    return transientCodes.includes(err.code) || err.fatal === true;
+};
+
+const queryWithRetry = async (sql, params = [], attempts = 3) => {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+        try {
+            return await pool.query(sql, params);
+        } catch (err) {
+            lastErr = err;
+            if (isTransientError(err) && i < attempts - 1) {
+                console.warn(`Transient DB error (${err.code || err.message}). Retrying (${i + 1}/${attempts - 1})...`);
+                // small backoff
+                await new Promise((r) => setTimeout(r, 150 * (i + 1)));
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastErr;
+};
+
+// Attach error handler to connections obtained from pool
+pool.on && pool.on('connection', (connection) => {
+    connection.on('error', (err) => {
+        console.error('MySQL connection error event:', err && err.code ? err.code : err);
+    });
+});
+
+// Graceful logging for unhandled rejections
+process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled Rejection at:', reason);
+});
+
 // Initialize database and create all tables
 const initializeDatabase = async () => {
     try {
@@ -113,6 +151,7 @@ const initializeDatabase = async () => {
                 duration INT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 seen_at TIMESTAMP NULL,
+                delivered_at TIMESTAMP NULL,
                 FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
                 FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
                 INDEX idx_chat_id (chat_id),
@@ -120,6 +159,17 @@ const initializeDatabase = async () => {
                 INDEX idx_created_at (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+
+        // Ensure delivered_at column exists for messages table
+        try {
+            const [cols] = await pool.query(`SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'delivered_at'`);
+            if (cols[0] && cols[0].cnt === 0) {
+                await pool.query(`ALTER TABLE messages ADD COLUMN delivered_at TIMESTAMP NULL`);
+                console.log('ℹ️ Added missing column `delivered_at` to `messages` table');
+            }
+        } catch (e) {
+            console.error('Failed to ensure delivered_at column:', e.message || e);
+        }
         console.log('✅ Messages table initialized');
 
         // Create groups table
@@ -129,6 +179,7 @@ const initializeDatabase = async () => {
                 name VARCHAR(100) NOT NULL,
                 description TEXT,
                 image VARCHAR(255),
+                group_type ENUM('public', 'private', 'secret') DEFAULT 'public',
                 created_by INT NOT NULL,
                 disappearing_days INT DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -137,6 +188,21 @@ const initializeDatabase = async () => {
                 INDEX idx_created_by (created_by)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+
+        // Ensure group_type column exists (for existing databases)
+        try {
+            const [rows] = await pool.query(
+                `SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'groups' AND COLUMN_NAME = 'group_type'`
+            );
+            if (rows[0] && rows[0].count === 0) {
+                await pool.query(
+                    `ALTER TABLE \`groups\` ADD COLUMN group_type ENUM('public','private','secret') DEFAULT 'public' AFTER image`
+                );
+                console.log('ℹ️ Added missing column `group_type` to `groups` table');
+            }
+        } catch (e) {
+            console.error('Failed to ensure group_type column:', e.message || e);
+        }
         console.log('✅ Groups table initialized');
 
         // Create group_members table
@@ -172,6 +238,36 @@ const initializeDatabase = async () => {
                 FOREIGN KEY (group_id) REFERENCES \`groups\`(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+        // Create group_join_requests table (for admin approval flow)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS group_join_requests (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                group_id INT NOT NULL,
+                user_id INT NOT NULL,
+                status ENUM('pending','approved','rejected') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES \`groups\`(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_group_id (group_id),
+                INDEX idx_user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+
+        // Create group invite links table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS group_invite_links (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                group_id INT NOT NULL,
+                token VARCHAR(255) NOT NULL UNIQUE,
+                expires_at TIMESTAMP NULL,
+                created_by INT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (group_id) REFERENCES \`groups\`(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+                INDEX idx_group_invite_group (group_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+
         console.log('✅ Group permissions table initialized');
 
         // Create files table
@@ -221,4 +317,4 @@ const initializeDatabase = async () => {
     }
 };
 
-module.exports = { pool, testConnection, initializeDatabase };
+module.exports = { pool, testConnection, initializeDatabase, queryWithRetry };
