@@ -125,6 +125,16 @@ class GroupController {
         try {
             const groupId = parseInt(req.params.id);
 
+            // Check if system group - block modifications
+            const isSystemGroup = await GroupModel.isSystemGroup(groupId);
+            if (isSystemGroup) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Mandatory system groups cannot be modified',
+                    error_code: 'SYSTEM_GROUP_PROTECTED'
+                });
+            }
+
             // Check if user is admin OR permissions allow editing
             const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
             const perms = await GroupModel.getPermissions(groupId);
@@ -169,6 +179,16 @@ class GroupController {
         try {
             const groupId = parseInt(req.params.id);
 
+            // Check if system group - block deletion
+            const isSystemGroup = await GroupModel.isSystemGroup(groupId);
+            if (isSystemGroup) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Mandatory system groups cannot be deleted',
+                    error_code: 'SYSTEM_GROUP_PROTECTED'
+                });
+            }
+
             // Check if user is admin
             const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);
             if (!isAdmin) {
@@ -210,6 +230,27 @@ class GroupController {
             res.status(500).json({
                 success: false,
                 message: 'Failed to get groups',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Get all mandatory/system groups
+     * GET /api/groups/mandatory
+     */
+    static async getMandatoryGroups(req, res) {
+        try {
+            const groups = await GroupModel.findSystemGroups();
+            res.status(200).json({
+                success: true,
+                data: groups
+            });
+        } catch (error) {
+            console.error('Get mandatory groups error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get mandatory groups',
                 error: error.message
             });
         }
@@ -349,6 +390,16 @@ class GroupController {
         try {
             const groupId = parseInt(req.params.id);
             const userId = parseInt(req.params.userId);
+
+            // Check if system group - block member removal
+            const isSystemGroup = await GroupModel.isSystemGroup(groupId);
+            if (isSystemGroup) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Members cannot be removed from mandatory groups',
+                    error_code: 'SYSTEM_GROUP_MEMBER_PROTECTED'
+                });
+            }
 
             // Check if requester is admin (only admins can remove)
             const isAdmin = await GroupModel.isAdmin(groupId, req.user.id);

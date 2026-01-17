@@ -18,23 +18,52 @@ class UserModel {
 
     /**
      * Create a new user in database
+     * Automatically adds user to all mandatory/system groups
      */
     static async create(userData) {
         const { name, email, hashedPassword, role, department } = userData;
+        const connection = await pool.getConnection();
 
-        const [result] = await pool.query(
-            `INSERT INTO users (name, email, password, role, department) 
-             VALUES (?, ?, ?, ?, ?)`,
-            [name, email, hashedPassword, role || 'clinical_staff', department || null]
-        );
+        try {
+            await connection.beginTransaction();
 
-        return {
-            id: result.insertId,
-            name,
-            email,
-            role: role || 'clinical_staff',
-            department
-        };
+            // Create user
+            const [result] = await connection.query(
+                `INSERT INTO users (name, email, password, role, department) 
+                 VALUES (?, ?, ?, ?, ?)`,
+                [name, email, hashedPassword, role || 'clinical_staff', department || null]
+            );
+            const userId = result.insertId;
+
+            // Add user to all mandatory groups
+            await connection.query(`
+                INSERT INTO group_members (group_id, user_id, role)
+                SELECT id, ?, 'member' FROM \`groups\` WHERE is_system_group = TRUE
+            `, [userId]);
+
+            // Add user to mandatory group chats
+            await connection.query(`
+                INSERT INTO chat_participants (chat_id, user_id)
+                SELECT c.id, ? FROM chats c
+                JOIN \`groups\` g ON c.group_id = g.id
+                WHERE g.is_system_group = TRUE
+            `, [userId]);
+
+            await connection.commit();
+
+            return {
+                id: userId,
+                name,
+                email,
+                role: role || 'clinical_staff',
+                department
+            };
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     /**

@@ -6,6 +6,31 @@ const { pool } = require('../config/db');
 class GroupModel {
 
     /**
+     * Check if a group is a system/mandatory group (protected from modifications)
+     */
+    static async isSystemGroup(groupId) {
+        const [rows] = await pool.query(
+            'SELECT is_system_group FROM `groups` WHERE id = ?',
+            [groupId]
+        );
+        return rows[0]?.is_system_group === 1;
+    }
+
+    /**
+     * Get all system/mandatory groups
+     */
+    static async findSystemGroups() {
+        const [rows] = await pool.query(`
+            SELECT g.*, 
+                   (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
+            FROM \`groups\` g 
+            WHERE g.is_system_group = TRUE
+            ORDER BY g.id ASC
+        `);
+        return rows;
+    }
+
+    /**
      * Create a new group
      */
     static async create(groupData) {
@@ -59,9 +84,14 @@ class GroupModel {
     }
 
     /**
-     * Update group
+     * Update group (blocked for system groups)
      */
     static async update(id, updateData) {
+        // Check if system group - block modifications
+        if (await this.isSystemGroup(id)) {
+            throw new Error('Mandatory system groups cannot be modified');
+        }
+
         const { name, description, image, disappearingDays } = updateData;
 
         let sql = 'UPDATE `groups` SET ';
@@ -95,9 +125,14 @@ class GroupModel {
     }
 
     /**
-     * Delete group
+     * Delete group (blocked for system groups)
      */
     static async delete(id) {
+        // Check if system group - block deletion
+        if (await this.isSystemGroup(id)) {
+            throw new Error('Mandatory system groups cannot be deleted');
+        }
+
         const [result] = await pool.query(
             'DELETE FROM `groups` WHERE id = ?',
             [id]
@@ -159,9 +194,14 @@ class GroupModel {
     }
 
     /**
-     * Remove member from group
+     * Remove member from group (blocked for system groups)
      */
     static async removeMember(groupId, userId) {
+        // Check if system group - block member removal
+        if (await this.isSystemGroup(groupId)) {
+            throw new Error('Members cannot be removed from mandatory groups');
+        }
+
         const [result] = await pool.query(
             'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
             [groupId, userId]

@@ -8,6 +8,7 @@ router.use(authenticate);
 
 // Group CRUD
 router.get('/', GroupController.getUserGroups);
+router.get('/mandatory', GroupController.getMandatoryGroups);
 router.post('/', GroupController.create);
 router.get('/:id', GroupController.getById);
 router.put('/:id', GroupController.update);
