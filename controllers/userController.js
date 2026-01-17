@@ -210,6 +210,170 @@ class UserController {
             });
         }
     }
+
+    /**
+     * Get current user's profile (full details)
+     * GET /api/users/profile
+     */
+    static async getProfile(req, res) {
+        try {
+            const user = await UserModel.findById(req.user.id);
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            // Get user's devices
+            const devices = await UserModel.getDevices(req.user.id);
+
+            res.status(200).json({
+                success: true,
+                data: {
+                    ...user,
+                    devices
+                }
+            });
+        } catch (error) {
+            console.error('Get profile error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get profile',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Update user profile settings
+     * PUT /api/users/profile/settings
+     */
+    static async updateSettings(req, res) {
+        try {
+            const {
+                active_status,
+                profile_visibility,
+                read_receipts,
+                online_visibility
+            } = req.body;
+
+            const updated = await UserModel.updateSettings(req.user.id, {
+                active_status,
+                profile_visibility,
+                read_receipts,
+                online_visibility
+            });
+
+            if (!updated) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            const user = await UserModel.findById(req.user.id);
+            res.status(200).json({
+                success: true,
+                message: 'Settings updated successfully',
+                data: user
+            });
+        } catch (error) {
+            console.error('Update settings error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to update settings',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Get user's connected devices
+     * GET /api/users/devices
+     */
+    static async getDevices(req, res) {
+        try {
+            const devices = await UserModel.getDevices(req.user.id);
+            res.status(200).json({
+                success: true,
+                data: devices
+            });
+        } catch (error) {
+            console.error('Get devices error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get devices',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Register/update device
+     * POST /api/users/devices
+     */
+    static async registerDevice(req, res) {
+        try {
+            const { device_name, device_type, push_token } = req.body;
+
+            if (!device_name) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Device name is required'
+                });
+            }
+
+            const device = await UserModel.registerDevice(req.user.id, {
+                device_name,
+                device_type: device_type || 'phone',
+                push_token
+            });
+
+            res.status(200).json({
+                success: true,
+                message: 'Device registered successfully',
+                data: device
+            });
+        } catch (error) {
+            console.error('Register device error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to register device',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Remove device
+     * DELETE /api/users/devices/:id
+     */
+    static async removeDevice(req, res) {
+        try {
+            const deviceId = parseInt(req.params.id);
+            const removed = await UserModel.removeDevice(req.user.id, deviceId);
+
+            if (!removed) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Device not found'
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                message: 'Device removed successfully'
+            });
+        } catch (error) {
+            console.error('Remove device error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to remove device',
+                error: error.message
+            });
+        }
+    }
 }
 
 module.exports = UserController;

@@ -87,6 +87,11 @@ const initializeDatabase = async () => {
                 department VARCHAR(100),
                 profile_picture VARCHAR(255),
                 active_status ENUM('available', 'away', 'dnd') DEFAULT 'available',
+                profile_visibility ENUM('everyone', 'contacts', 'nobody') DEFAULT 'everyone',
+                read_receipts BOOLEAN DEFAULT TRUE,
+                online_visibility BOOLEAN DEFAULT TRUE,
+                two_factor_enabled BOOLEAN DEFAULT FALSE,
+                two_factor_secret VARCHAR(255),
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -269,6 +274,22 @@ const initializeDatabase = async () => {
         `);
 
         console.log('✅ Group permissions table initialized');
+
+        // Create user_devices table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_devices (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                device_name VARCHAR(100) NOT NULL,
+                device_type ENUM('phone', 'tablet', 'laptop', 'desktop') DEFAULT 'phone',
+                push_token VARCHAR(255),
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_user_devices (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ User devices table initialized');
 
         // Create files table
         await pool.query(`

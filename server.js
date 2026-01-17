@@ -18,6 +18,7 @@ const chatRoutes = require('./routes/chatRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -69,6 +70,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -140,6 +142,10 @@ app.get('/', (req, res) => {
                 markAllAsRead: 'PUT /api/notifications/read-all',
                 delete: 'DELETE /api/notifications/:id'
             },
+            settings: {
+                get: 'GET /api/settings',
+                update: 'PUT /api/settings'
+            },
             websocket: {
                 events: [
                     'send_message',
@@ -193,6 +199,10 @@ const startServer = async () => {
 
         // Initialize OTP table
         await OtpModel.initialize();
+
+        // Initialize settings table
+        const SettingsModel = require('./models/settingsModel');
+        await SettingsModel.initTable();
 
         // Initialize email transporter
         initializeEmail();

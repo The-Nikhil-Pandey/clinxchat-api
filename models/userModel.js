@@ -54,7 +54,9 @@ class UserModel {
     static async findById(id) {
         const [rows] = await pool.query(
             `SELECT id, name, email, role, department, profile_picture, 
-                    active_status, is_active, created_at, updated_at 
+                    active_status, profile_visibility, read_receipts, 
+                    online_visibility, two_factor_enabled,
+                    is_active, created_at, updated_at 
              FROM users WHERE id = ?`,
             [id]
         );
@@ -171,6 +173,120 @@ class UserModel {
             [id]
         );
         return rows[0] || null;
+    }
+
+    /**
+     * Update user settings (profile visibility, receipts, etc.)
+     */
+    static async updateSettings(id, settings) {
+        const {
+            active_status,
+            profile_visibility,
+            read_receipts,
+            online_visibility
+        } = settings;
+
+        let sql = 'UPDATE users SET ';
+        const updates = [];
+        const params = [];
+
+        if (active_status !== undefined) {
+            updates.push('active_status = ?');
+            params.push(active_status);
+        }
+        if (profile_visibility !== undefined) {
+            updates.push('profile_visibility = ?');
+            params.push(profile_visibility);
+        }
+        if (read_receipts !== undefined) {
+            updates.push('read_receipts = ?');
+            params.push(read_receipts);
+        }
+        if (online_visibility !== undefined) {
+            updates.push('online_visibility = ?');
+            params.push(online_visibility);
+        }
+
+        if (updates.length === 0) return false;
+
+        sql += updates.join(', ') + ' WHERE id = ?';
+        params.push(id);
+
+        const [result] = await pool.query(sql, params);
+        return result.affectedRows > 0;
+    }
+
+    /**
+     * Get user's devices
+     */
+    static async getDevices(userId) {
+        const [rows] = await pool.query(
+            `SELECT id, device_name, device_type, last_active, created_at
+             FROM user_devices 
+             WHERE user_id = ?
+             ORDER BY last_active DESC`,
+            [userId]
+        );
+        return rows;
+    }
+
+    /**
+     * Register a new device or update existing
+     */
+    static async registerDevice(userId, deviceData) {
+        const { device_name, device_type, push_token } = deviceData;
+
+        // Check if device with same name exists
+        const [existing] = await pool.query(
+            'SELECT id FROM user_devices WHERE user_id = ? AND device_name = ?',
+            [userId, device_name]
+        );
+
+        if (existing.length > 0) {
+            // Update existing device
+            await pool.query(
+                `UPDATE user_devices 
+                 SET last_active = CURRENT_TIMESTAMP, push_token = ?
+                 WHERE id = ?`,
+                [push_token, existing[0].id]
+            );
+            return { id: existing[0].id, device_name, device_type, updated: true };
+        }
+
+        // Insert new device
+        const [result] = await pool.query(
+            `INSERT INTO user_devices (user_id, device_name, device_type, push_token)
+             VALUES (?, ?, ?, ?)`,
+            [userId, device_name, device_type, push_token]
+        );
+
+        return {
+            id: result.insertId,
+            device_name,
+            device_type,
+            created: true
+        };
+    }
+
+    /**
+     * Remove a device
+     */
+    static async removeDevice(userId, deviceId) {
+        const [result] = await pool.query(
+            'DELETE FROM user_devices WHERE id = ? AND user_id = ?',
+            [deviceId, userId]
+        );
+        return result.affectedRows > 0;
+    }
+
+    /**
+     * Update device last active time
+     */
+    static async updateDeviceActivity(deviceId) {
+        await pool.query(
+            'UPDATE user_devices SET last_active = CURRENT_TIMESTAMP WHERE id = ?',
+            [deviceId]
+        );
     }
 }
 
