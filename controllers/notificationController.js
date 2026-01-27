@@ -50,10 +50,20 @@ class NotificationController {
                 });
             }
 
+            // Emit socket event for real-time sync across devices
+            if (req.app.get('io')) {
+                const unreadCount = await NotificationModel.getUnreadCount(req.user.id);
+                req.app.get('io').to(`user:${req.user.id}`).emit('notification_read', {
+                    notificationId,
+                    unreadCount
+                });
+            }
+
             res.status(200).json({
                 success: true,
                 message: 'Notification marked as read'
             });
+
         } catch (error) {
             console.error('Mark as read error:', error);
             res.status(500).json({
@@ -72,10 +82,19 @@ class NotificationController {
         try {
             const count = await NotificationModel.markAllAsRead(req.user.id);
 
+            // Emit socket event for real-time sync across devices
+            if (req.app.get('io')) {
+                req.app.get('io').to(`user:${req.user.id}`).emit('notification_read', {
+                    all: true,
+                    unreadCount: 0
+                });
+            }
+
             res.status(200).json({
                 success: true,
                 message: `${count} notifications marked as read`
             });
+
         } catch (error) {
             console.error('Mark all as read error:', error);
             res.status(500).json({

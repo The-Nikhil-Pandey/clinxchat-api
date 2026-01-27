@@ -81,29 +81,45 @@ class InviteController {
                     to: email,
                     subject: `You're invited to join ${team.name} on ClinxChat`,
                     html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                            <h2 style="color: #4F46E5;">You're Invited!</h2>
-                            <p>Hi there,</p>
-                            <p><strong>${req.user.name}</strong> has invited you to join <strong>${team.name}</strong> on ClinxChat.</p>
-                            <p>Click the button below to accept the invitation:</p>
+                            <p style="margin: 0 0 20px 0; font-size: 16px; color: #333333;">Hi there,</p>
+                            <p style="margin: 0 0 20px 0; font-size: 15px; color: #666666; line-height: 1.6;"><strong>${req.user.name}</strong> has invited you to join <strong>${team.name}</strong> on ClinxChat.</p>
+                            <p style="margin: 0 0 30px 0; font-size: 15px; color: #666666; line-height: 1.6;">Click the button below to accept the invitation and start chatting with your team:</p>
                             <div style="text-align: center; margin: 30px 0;">
                                 <a href="${inviteUrl}" 
-                                   style="background-color: #4F46E5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                                   style="background-color: #BD6ED7; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(189, 110, 215, 0.3);">
                                     Accept Invitation
                                 </a>
                             </div>
-                            <p style="color: #666; font-size: 14px;">This invitation expires in 7 days.</p>
-                            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                            <p style="color: #999; font-size: 12px;">
-                                If you didn't expect this invitation, you can safely ignore this email.
-                            </p>
-                        </div>
+                            <p style="margin: 30px 0 0 0; color: #999; font-size: 13px; text-align: center;">This invitation expires in 7 days.</p>
+
                     `
                 });
             } catch (emailError) {
                 console.error('Failed to send invite email:', emailError);
                 // Continue even if email fails - invite is still valid
             }
+
+            // Create in-app notification if user already exists
+            if (existingUser) {
+                try {
+                    const NotificationModel = require('../models/notificationModel');
+                    const notification = await NotificationModel.create({
+                        userId: existingUser.id,
+                        type: 'team_invite',
+                        title: 'Team Invitation',
+                        message: `${req.user.name} invited you to join "${team.name}"`,
+                        data: { teamId, inviteId: invite.id, token: invite.token }
+                    });
+
+                    // Emit to user if online
+                    if (req.app.get('io')) {
+                        req.app.get('io').to(`user:${existingUser.id}`).emit('notification', notification);
+                    }
+                } catch (notifError) {
+                    console.error('Failed to create team invite notification:', notifError);
+                }
+            }
+
 
             res.status(201).json({
                 success: true,
@@ -303,6 +319,25 @@ class InviteController {
                     role: invite.role
                 }
             });
+
+            // Notify team owner that someone joined
+            try {
+                const NotificationModel = require('../models/notificationModel');
+                const ownerNotification = await NotificationModel.create({
+                    userId: team.owner_id,
+                    type: 'team_join',
+                    title: 'New Team Member',
+                    message: `${req.user.name} has joined "${team.name}"`,
+                    data: { teamId: team.id, userId: userId }
+                });
+
+                if (req.app.get('io')) {
+                    req.app.get('io').to(`user:${team.owner_id}`).emit('notification', ownerNotification);
+                }
+            } catch (notifError) {
+                console.error('Failed to notify team owner of join:', notifError);
+            }
+
         } catch (error) {
             console.error('Accept invite error:', error);
             res.status(500).json({
@@ -345,18 +380,16 @@ class InviteController {
                     to: invite.email,
                     subject: `Reminder: You're invited to join ${invite.team_name} on ClinxChat`,
                     html: `
-                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                            <h2 style="color: #4F46E5;">Invitation Reminder</h2>
-                            <p>Hi there,</p>
-                            <p>This is a reminder that you've been invited to join <strong>${invite.team_name}</strong> on ClinxChat.</p>
+                            <p style="margin: 0 0 20px 0; font-size: 16px; color: #333333;">Hi there,</p>
+                            <p style="margin: 0 0 20px 0; font-size: 15px; color: #666666; line-height: 1.6;">This is a reminder that you've been invited to join <strong>${invite.team_name}</strong> on ClinxChat.</p>
                             <div style="text-align: center; margin: 30px 0;">
                                 <a href="${inviteUrl}" 
-                                   style="background-color: #4F46E5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                                   style="background-color: #BD6ED7; color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; display: inline-block; box-shadow: 0 4px 12px rgba(189, 110, 215, 0.3);">
                                     Accept Invitation
                                 </a>
                             </div>
-                            <p style="color: #666; font-size: 14px;">This invitation expires in 7 days.</p>
-                        </div>
+                            <p style="margin: 30px 0 0 0; color: #999; font-size: 13px; text-align: center;">This invitation expires in 7 days.</p>
+
                     `
                 });
             } catch (emailError) {

@@ -33,9 +33,14 @@ class NotificationModel {
             'SELECT * FROM notifications WHERE id = ?',
             [id]
         );
-        if (rows[0] && rows[0].data) {
-            rows[0].data = JSON.parse(rows[0].data);
+        if (rows[0] && rows[0].data && typeof rows[0].data === 'string') {
+            try {
+                rows[0].data = JSON.parse(rows[0].data);
+            } catch (e) {
+                console.error('Failed to parse notification data:', e);
+            }
         }
+
         return rows[0] || null;
     }
 
@@ -51,11 +56,16 @@ class NotificationModel {
         `, [userId, limit, offset]);
 
         return rows.map(row => {
-            if (row.data) {
-                row.data = JSON.parse(row.data);
+            if (row.data && typeof row.data === 'string') {
+                try {
+                    row.data = JSON.parse(row.data);
+                } catch (e) {
+                    console.error('Failed to parse notification data:', e);
+                }
             }
             return row;
         });
+
     }
 
     /**

@@ -240,6 +240,10 @@ class UserModel {
             updates.push('online_visibility = ?');
             params.push(online_visibility);
         }
+        if (two_factor_enabled !== undefined) {
+            updates.push('two_factor_enabled = ?');
+            params.push(two_factor_enabled);
+        }
 
         if (updates.length === 0) return false;
 

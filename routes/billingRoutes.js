@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const BillingController = require('../controllers/billingController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, adminOnly } = require('../middleware/auth');
 const { loadTeamContext, requireTeam, requireTeamAdmin } = require('../middleware/teamAuth');
 
 // Webhook endpoint - must be before body parser for raw body
@@ -9,6 +9,10 @@ router.post('/webhook', express.raw({ type: 'application/json' }), BillingContro
 
 // Protected routes
 router.use(authenticate);
+
+// Global Admin Route (No team context needed)
+router.get('/all-payments', adminOnly, BillingController.getAllPayments);
+
 router.use(loadTeamContext);
 router.use(requireTeam);
 

@@ -910,9 +910,39 @@ class GroupController {
                 req.app.get('io').to(`group:${groupId}`).emit('receive_message', {
                     groupId,
                     chatId: chat.id,
-                    message
+                    message: {
+                        ...message,
+                        sender_name: req.user.name,
+                        sender_picture: req.user.profile_picture
+                    }
                 });
             }
+
+            // Create in-app notifications for other members
+            try {
+                const members = await GroupModel.getMembers(groupId);
+                const NotificationModel = require('../models/notificationModel');
+                const group = await GroupModel.findById(groupId);
+
+                for (const member of members) {
+                    if (member.id !== req.user.id) {
+                        const notification = await NotificationModel.create({
+                            userId: member.id,
+                            type: 'message',
+                            title: group.name,
+                            message: `${req.user.name}: ${messageType === 'text' ? content : `Sent a ${messageType}`}`,
+                            data: { groupId, chatId: chat.id, senderId: req.user.id }
+                        });
+
+                        if (req.app.get('io')) {
+                            req.app.get('io').to(`user:${member.id}`).emit('notification', notification);
+                        }
+                    }
+                }
+            } catch (notifError) {
+                console.error('Failed to create group message notifications:', notifError);
+            }
+
 
             res.status(201).json({
                 success: true,

@@ -59,27 +59,64 @@ const initializeSocket = (io) => {
         socket.on('send_message', async (data) => {
             const { chatId, receiverId, groupId, message } = data;
 
+            const messageData = {
+                ...message,
+                sender_name: socket.user.name,
+                sender_picture: socket.user.profile_picture
+            };
+
             if (groupId) {
-                // Group message
-                socket.to(`group:${groupId}`).emit('receive_message', {
+                // Group message - use io.to to include sender's other devices if they are in the group
+                io.to(`group:${groupId}`).emit('receive_message', {
                     groupId,
                     chatId,
-                    message: {
-                        ...message,
-                        sender_name: socket.user.name,
-                        sender_picture: socket.user.profile_picture
-                    }
+                    message: messageData
                 });
+
+
+                // Create persistent notifications for other members
+                try {
+                    const NotificationModel = require('../models/notificationModel');
+                    const members = await GroupModel.getMembers(groupId);
+                    const group = await GroupModel.findById(groupId);
+
+                    for (const member of members) {
+                        if (member.id !== userId) {
+                            const notification = await NotificationModel.create({
+                                userId: member.id,
+                                type: 'message',
+                                title: group.name,
+                                message: `${socket.user.name}: ${message.message_type === 'text' ? message.content : `Sent a ${message.message_type}`}`,
+                                data: { groupId, chatId, senderId: userId }
+                            });
+                            io.to(`user:${member.id}`).emit('notification', notification);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to create group socket notification:', e);
+                }
             } else if (receiverId) {
-                // Private message
-                socket.to(`user:${receiverId}`).emit('receive_message', {
+                // Private message - emit to both receiver and sender (for multi-device sync)
+                io.to(`user:${receiverId}`).to(`user:${userId}`).emit('receive_message', {
                     chatId,
-                    message: {
-                        ...message,
-                        sender_name: socket.user.name,
-                        sender_picture: socket.user.profile_picture
-                    }
+                    message: messageData
                 });
+
+
+                // Create persistent notification for receiver
+                try {
+                    const NotificationModel = require('../models/notificationModel');
+                    const notification = await NotificationModel.create({
+                        userId: receiverId,
+                        type: 'message',
+                        title: `New Message from ${socket.user.name}`,
+                        message: message.message_type === 'text' ? message.content : `Sent a ${message.message_type}`,
+                        data: { chatId, senderId: userId }
+                    });
+                    io.to(`user:${receiverId}`).emit('notification', notification);
+                } catch (e) {
+                    console.error('Failed to create private socket notification:', e);
+                }
             }
         });
 

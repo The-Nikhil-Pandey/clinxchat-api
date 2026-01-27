@@ -11,7 +11,10 @@ class UserController {
      */
     static async getById(req, res) {
         try {
-            const user = await UserModel.findById(req.params.id);
+            const requestedId = parseInt(req.params.id);
+            const requesterId = req.user.id;
+
+            const user = await UserModel.findById(requestedId);
             if (!user) {
                 return res.status(404).json({
                     success: false,
@@ -19,9 +22,53 @@ class UserController {
                 });
             }
 
+            // Privacy Logic
+            let maskedUser = { ...user };
+
+            // 1. Online status visibility
+            if (!user.online_visibility && requestedId !== requesterId) {
+                maskedUser.active_status = null;
+            }
+
+            // 2. Profile visibility
+            if (requestedId !== requesterId) {
+                const { pool } = require('../config/db');
+
+                // Check if they are contacts
+                const [contactRows] = await pool.query(
+                    `SELECT id FROM contacts 
+                     WHERE (user_id = ? AND contact_user_id = ?) 
+                        OR (user_id = ? AND contact_user_id = ?)`,
+                    [requesterId, requestedId, requestedId, requesterId]
+                );
+                const isContact = contactRows.length > 0;
+
+                const visibility = user.profile_visibility || 'everyone';
+
+                if (visibility === 'nobody') {
+                    // Minimal data
+                    maskedUser = {
+                        id: user.id,
+                        name: user.name,
+                        profile_picture: user.profile_picture,
+                        role: user.role,
+                        is_restricted: true
+                    };
+                } else if (visibility === 'contacts' && !isContact) {
+                    // Minimal data
+                    maskedUser = {
+                        id: user.id,
+                        name: user.name,
+                        profile_picture: user.profile_picture,
+                        role: user.role,
+                        is_restricted: true
+                    };
+                }
+            }
+
             res.status(200).json({
                 success: true,
-                data: user
+                data: maskedUser
             });
         } catch (error) {
             console.error('Get user error:', error);
@@ -62,7 +109,7 @@ class UserController {
             // Get team members only
             const [users] = await pool.query(
                 `SELECT u.id, u.name, u.email, u.role, u.department, u.profile_picture, 
-                        u.active_status, u.created_at, tm.role as team_role
+                        u.active_status, u.online_visibility, u.created_at, tm.role as team_role
                  FROM users u
                  JOIN team_members tm ON u.id = tm.user_id
                  WHERE tm.team_id = ? AND u.is_active = TRUE AND u.id != ?
@@ -70,9 +117,16 @@ class UserController {
                 [teamId, req.user.id]
             );
 
+            // Respect online_visibility
+            const maskedUsers = users.map(u => ({
+                ...u,
+                active_status: u.online_visibility ? u.active_status : null,
+                online_visibility: undefined // Remove from output
+            }));
+
             res.status(200).json({
                 success: true,
-                data: users
+                data: maskedUsers
             });
         } catch (error) {
             console.error('Get all users error:', error);
@@ -121,7 +175,7 @@ class UserController {
             const searchPattern = `%${query}%`;
             const [users] = await pool.query(
                 `SELECT u.id, u.name, u.email, u.role, u.department, u.profile_picture, 
-                        u.active_status, tm.role as team_role
+                        u.active_status, u.online_visibility, tm.role as team_role
                  FROM users u
                  JOIN team_members tm ON u.id = tm.user_id
                  WHERE tm.team_id = ? 
@@ -133,9 +187,16 @@ class UserController {
                 [teamId, req.user.id, searchPattern, searchPattern]
             );
 
+            // Respect online_visibility
+            const maskedUsers = users.map(u => ({
+                ...u,
+                active_status: u.online_visibility ? u.active_status : null,
+                online_visibility: undefined
+            }));
+
             res.status(200).json({
                 success: true,
-                data: users
+                data: maskedUsers
             });
         } catch (error) {
             console.error('Search users error:', error);
@@ -319,14 +380,16 @@ class UserController {
                 active_status,
                 profile_visibility,
                 read_receipts,
-                online_visibility
+                online_visibility,
+                two_factor_enabled
             } = req.body;
 
             const updated = await UserModel.updateSettings(req.user.id, {
                 active_status,
                 profile_visibility,
                 read_receipts,
-                online_visibility
+                online_visibility,
+                two_factor_enabled
             });
 
             if (!updated) {

@@ -126,6 +126,25 @@ class ChatController {
                 });
             }
 
+            // Create in-app notification for the receiver
+            try {
+                const NotificationModel = require('../models/notificationModel');
+                const notification = await NotificationModel.create({
+                    userId: receiverId,
+                    type: 'message',
+                    title: `New Message from ${req.user.name}`,
+                    message: messageType === 'text' ? content : `Sent a ${messageType}`,
+                    data: { chatId, senderId: req.user.id }
+                });
+
+                if (req.app.get('io')) {
+                    req.app.get('io').to(`user:${receiverId}`).emit('notification', notification);
+                }
+            } catch (notifError) {
+                console.error('Failed to create message notification:', notifError);
+            }
+
+
             res.status(201).json({
                 success: true,
                 message: 'Message sent successfully',
@@ -237,13 +256,14 @@ class ChatController {
                 const chat = await ChatModel.findById(chatId);
                 const participants = await ChatModel.getParticipants(chatId);
                 participants.forEach(p => {
-                    if (p.id !== req.user.id) {
-                        req.app.get('io').to(`user:${p.id}`).emit('message_seen', {
-                            chatId,
-                            userId: req.user.id
-                        });
-                    }
+                    req.app.get('io').to(`user:${p.id}`).emit('message_seen', {
+                        chatId,
+                        userId: req.user.id,
+                        groupId: chat.group_id
+                    });
+
                 });
+
             }
 
             res.status(200).json({

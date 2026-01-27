@@ -488,6 +488,19 @@ const initializeDatabase = async () => {
                 INDEX idx_team (team_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+        // Ensure amount column exists in payments (for backward compatibility)
+        try {
+            const [cols] = await pool.query(`
+                SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payments' AND COLUMN_NAME = 'amount'
+            `);
+            if (cols[0] && cols[0].cnt === 0) {
+                await pool.query(`ALTER TABLE payments ADD COLUMN amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00 AFTER stripe_invoice_id`);
+                console.log('ℹ️ Added amount column to payments table');
+            }
+        } catch (e) {
+            console.error('Failed to add amount column to payments:', e.message);
+        }
         console.log('✅ Payments table initialized');
 
         // Add current_team_id to users table if not exists

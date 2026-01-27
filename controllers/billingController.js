@@ -135,6 +135,18 @@ class BillingController {
                 }
             });
 
+            // Record pending payment
+            await pool.query(
+                `INSERT INTO payments (team_id, amount, currency, status, description, metadata)
+                 VALUES (?, ?, 'GBP', 'pending', ?, ?)`,
+                [
+                    teamId,
+                    (extraMembers * 99) / 100,
+                    `Add ${extraMembers} extra member(s) (Pending)`,
+                    JSON.stringify({ checkout_session_id: session.id })
+                ]
+            );
+
             res.json({
                 success: true,
                 data: {
@@ -171,15 +183,19 @@ class BillingController {
 
                 return res.json({
                     success: true,
-                    status: 'paid',
-                    message: 'Payment was successful'
+                    data: {
+                        status: 'paid',
+                        message: 'Payment was successful'
+                    }
                 });
             }
 
             res.json({
                 success: true,
-                status: session.payment_status,
-                message: `Payment status: ${session.payment_status}`
+                data: {
+                    status: session.payment_status,
+                    message: `Payment status: ${session.payment_status}`
+                }
             });
         } catch (error) {
             console.error('Check session status error:', error);
@@ -278,6 +294,23 @@ class BillingController {
             [teamId, session.subscription, session.customer, extraMembers, extraMembers]
         );
 
+        // Update payment record from pending to succeeded
+        // We look for a pending record with this checkout_session_id in metadata
+        await pool.query(
+            `UPDATE payments 
+             SET status = 'succeeded', 
+                 stripe_payment_intent_id = ?, 
+                 description = ?
+             WHERE team_id = ? AND status = 'pending' 
+             AND JSON_EXTRACT(metadata, '$.checkout_session_id') = ?`,
+            [
+                session.payment_intent || null,
+                `Add ${extraMembers} extra member(s) (Succeeded)`,
+                teamId,
+                session.id
+            ]
+        );
+
         console.log(`Team ${teamId} upgraded with ${extraMembers} extra members`);
     }
 
@@ -318,6 +351,38 @@ class BillingController {
             `UPDATE subscriptions SET status = 'past_due' WHERE stripe_subscription_id = ?`,
             [subscriptionId]
         );
+
+        // Record failed payment
+        const [subs] = await pool.query(
+            `SELECT team_id FROM subscriptions WHERE stripe_subscription_id = ?`,
+            [subscriptionId]
+        );
+
+        if (subs[0]) {
+            // Update the most recent pending payment if it exists, otherwise insert a failed one
+            const [pending] = await pool.query(
+                `SELECT id FROM payments WHERE team_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+                [subs[0].team_id]
+            );
+
+            if (pending[0]) {
+                await pool.query(
+                    `UPDATE payments 
+                     SET status = 'failed', 
+                         stripe_invoice_id = ?, 
+                         stripe_payment_intent_id = ?,
+                         description = 'Monthly subscription (Failed)'
+                     WHERE id = ?`,
+                    [invoice.id, invoice.payment_intent, pending[0].id]
+                );
+            } else {
+                await pool.query(
+                    `INSERT INTO payments (team_id, stripe_payment_intent_id, stripe_invoice_id, amount, currency, status, description)
+                     VALUES (?, ?, ?, ?, 'GBP', 'failed', 'Monthly subscription (Failed)')`,
+                    [subs[0].team_id, invoice.payment_intent, invoice.id, invoice.amount_due / 100]
+                );
+            }
+        }
     }
 
     /**
@@ -452,6 +517,34 @@ class BillingController {
             res.status(500).json({
                 success: false,
                 message: 'Failed to get payment history'
+            });
+        }
+    }
+
+    /**
+     * Get all payments (Admin Only)
+     * GET /api/billing/all-payments
+     */
+    static async getAllPayments(req, res) {
+        try {
+            // Include team information for better admin context
+            const [payments] = await pool.query(
+                `SELECT p.*, t.name as team_name 
+                 FROM payments p
+                 LEFT JOIN teams t ON p.team_id = t.id
+                 ORDER BY p.created_at DESC 
+                 LIMIT 100`
+            );
+
+            res.json({
+                success: true,
+                data: payments
+            });
+        } catch (error) {
+            console.error('Get all payments error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get global payment history'
             });
         }
     }
