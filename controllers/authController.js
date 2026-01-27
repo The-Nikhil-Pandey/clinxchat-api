@@ -489,6 +489,171 @@ class AuthController {
             });
         }
     }
+
+    /**
+     * Forgot Password - Send OTP to email
+     * POST /api/auth/forgot-password
+     */
+    static async forgotPassword(req, res) {
+        try {
+            const { email } = req.body;
+
+            if (!email) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email is required'
+                });
+            }
+
+            // Check if user exists
+            const user = await UserModel.findByEmail(email);
+            if (!user) {
+                // For security, don't reveal if email exists
+                return res.status(200).json({
+                    success: true,
+                    message: 'If this email exists, a reset code has been sent'
+                });
+            }
+
+            // Generate OTP
+            const otp = generateOtp(5);
+
+            // Save OTP to database
+            await OtpModel.create(email, otp, 10); // 10 minutes expiry for password reset
+
+            // Send OTP via email
+            await sendOtpEmail(email, otp, 'Password Reset');
+
+            res.status(200).json({
+                success: true,
+                message: 'Reset code sent to your email',
+                data: {
+                    email,
+                    expiresIn: 600 // 10 minutes
+                }
+            });
+        } catch (error) {
+            console.error('Forgot password error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to send reset code',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Verify Reset OTP - Check if OTP is valid before allowing password reset
+     * POST /api/auth/verify-reset-otp
+     */
+    static async verifyResetOtp(req, res) {
+        try {
+            const { email, otp } = req.body;
+
+            if (!email || !otp) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email and OTP are required'
+                });
+            }
+
+            // Verify OTP
+            const otpResult = await OtpModel.verify(email, otp);
+            if (!otpResult.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: otpResult.message
+                });
+            }
+
+            res.status(200).json({
+                success: true,
+                message: 'OTP verified successfully'
+            });
+        } catch (error) {
+            console.error('Verify reset OTP error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Verification failed',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Reset Password - Verify OTP and set new password
+     * POST /api/auth/reset-password
+     */
+    static async resetPassword(req, res) {
+        try {
+            const { email, otp, newPassword } = req.body;
+
+            if (!email || !otp || !newPassword) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email, OTP and new password are required'
+                });
+            }
+
+            // Validate new password
+            if (newPassword.length < 8) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Password must be at least 8 characters long'
+                });
+            }
+
+            const hasLetters = /[a-zA-Z]/.test(newPassword);
+            const hasNumbers = /[0-9]/.test(newPassword);
+
+            if (!hasLetters || !hasNumbers) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Password must contain both letters and numbers'
+                });
+            }
+
+            // Check if user exists
+            const user = await UserModel.findByEmail(email);
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'User not found'
+                });
+            }
+
+            // Verify OTP (allow verified since it was checked in the previous step)
+            const otpResult = await OtpModel.verify(email, otp, true);
+            if (!otpResult.valid) {
+                return res.status(400).json({
+                    success: false,
+                    message: otpResult.message
+                });
+            }
+
+            // Hash new password
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+            // Update password
+            await UserModel.updatePassword(user.id, hashedPassword);
+
+            // Clean up OTP
+            await OtpModel.deleteByEmail(email);
+
+            res.status(200).json({
+                success: true,
+                message: 'Password reset successfully. Please login with your new password.'
+            });
+        } catch (error) {
+            console.error('Reset password error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to reset password',
+                error: error.message
+            });
+        }
+    }
 }
 
 module.exports = AuthController;

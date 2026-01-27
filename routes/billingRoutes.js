@@ -20,6 +20,7 @@ router.get('/payments', BillingController.getPayments);
 
 // Admin only operations
 router.post('/checkout', requireTeamAdmin, BillingController.createCheckout);
+router.get('/session-status/:sessionId', requireTeamAdmin, BillingController.checkSessionStatus);
 router.post('/cancel', requireTeamAdmin, BillingController.cancelSubscription);
 
 module.exports = router;

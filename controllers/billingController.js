@@ -6,9 +6,10 @@ let stripe;
 try {
     if (process.env.STRIPE_SECRET_KEY) {
         stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        console.log('✅ Stripe initialized successfully');
     }
 } catch (error) {
-    console.warn('Stripe not initialized:', error.message);
+    console.warn('❌ Stripe initialization failed:', error.message);
 }
 
 /**
@@ -75,6 +76,7 @@ class BillingController {
 
             const teamId = req.teamId;
             const { extraMembers } = req.body;
+            console.log('Checkout Request - Team ID:', teamId, 'Body:', req.body);
 
             if (!extraMembers || extraMembers < 1) {
                 return res.status(400).json({
@@ -146,6 +148,42 @@ class BillingController {
                 success: false,
                 message: 'Failed to create checkout session'
             });
+        }
+    }
+
+    /**
+     * Check checkout session status
+     * GET /api/billing/session-status/:sessionId
+     */
+    static async checkSessionStatus(req, res) {
+        try {
+            if (!stripe) {
+                return res.status(503).json({ success: false, message: 'Stripe not configured' });
+            }
+
+            const { sessionId } = req.params;
+            const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+            if (session.payment_status === 'paid') {
+                // If paid but webhook hasn't processed it yet, we can trigger the update here too
+                // to make UI faster. Webhook will still run as a safety net.
+                await BillingController.handleCheckoutComplete(session);
+
+                return res.json({
+                    success: true,
+                    status: 'paid',
+                    message: 'Payment was successful'
+                });
+            }
+
+            res.json({
+                success: true,
+                status: session.payment_status,
+                message: `Payment status: ${session.payment_status}`
+            });
+        } catch (error) {
+            console.error('Check session status error:', error);
+            res.status(500).json({ success: false, message: 'Failed to check session status' });
         }
     }
 

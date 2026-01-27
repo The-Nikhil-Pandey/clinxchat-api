@@ -39,20 +39,31 @@ const initializeEmail = () => {
  * Send OTP verification email
  * @param {string} to - Recipient email
  * @param {string} otp - OTP code
+ * @param {string} purpose - Purpose of OTP (default: 'Verification')
  * @returns {Promise<boolean>} - Success status
  */
-const sendOtpEmail = async (to, otp) => {
+const sendOtpEmail = async (to, otp, purpose = 'Verification') => {
     if (!transporter) {
         console.error('Email transporter not initialized');
         // For development, log OTP to console
-        console.log(`📧 [DEV MODE] OTP for ${to}: ${otp}`);
+        console.log(`📧 [DEV MODE] OTP for ${to}: ${otp} (${purpose})`);
         return true; // Return true for development
     }
+
+    const subject = purpose === 'Password Reset'
+        ? 'ClinixChat - Password Reset Code'
+        : 'ClinixChat - Your Verification Code';
+
+    const message = purpose === 'Password Reset'
+        ? 'Please enter the following code to reset your password:'
+        : 'Please enter the following verification code to complete your registration:';
+
+    const expiryText = purpose === 'Password Reset' ? '10 minutes' : '5 minutes';
 
     const mailOptions = {
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: to,
-        subject: 'ClinixChat - Your Verification Code',
+        subject: subject,
         html: `
             <!DOCTYPE html>
             <html>
@@ -78,9 +89,9 @@ const sendOtpEmail = async (to, otp) => {
                                 <!-- Content -->
                                 <tr>
                                     <td style="padding: 20px 40px;">
-                                        <h2 style="margin: 0 0 15px 0; font-size: 22px; font-weight: 600; color: #1A1A2E; text-align: center;">Verification Code</h2>
+                                        <h2 style="margin: 0 0 15px 0; font-size: 22px; font-weight: 600; color: #1A1A2E; text-align: center;">${purpose}</h2>
                                         <p style="margin: 0 0 30px 0; font-size: 15px; color: #666666; text-align: center; line-height: 1.6;">
-                                            Please enter the following verification code to complete your registration:
+                                            ${message}
                                         </p>
                                         
                                         <!-- OTP Box -->
@@ -89,7 +100,7 @@ const sendOtpEmail = async (to, otp) => {
                                         </div>
                                         
                                         <p style="margin: 25px 0 0 0; font-size: 13px; color: #999999; text-align: center;">
-                                            ⏱️ This code expires in <strong style="color: #BD6ED7;">5 minutes</strong>
+                                            ⏱️ This code expires in <strong style="color: #BD6ED7;">${expiryText}</strong>
                                         </p>
                                     </td>
                                 </tr>

@@ -58,12 +58,13 @@ class OtpModel {
      * @param {string} otpCode - OTP to verify
      * @returns {Object} - { valid: boolean, message: string }
      */
-    static async verify(email, otpCode) {
+    static async verify(email, otpCode, allowAlreadyVerified = false) {
         // Get OTP record
-        const [rows] = await pool.query(
-            `SELECT * FROM otps WHERE email = ? AND verified = FALSE ORDER BY created_at DESC LIMIT 1`,
-            [email]
-        );
+        const query = allowAlreadyVerified
+            ? `SELECT * FROM otps WHERE email = ? ORDER BY created_at DESC LIMIT 1`
+            : `SELECT * FROM otps WHERE email = ? AND verified = FALSE ORDER BY created_at DESC LIMIT 1`;
+
+        const [rows] = await pool.query(query, [email]);
 
         if (rows.length === 0) {
             return { valid: false, message: 'No OTP found. Please request a new one.' };

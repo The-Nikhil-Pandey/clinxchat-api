@@ -18,14 +18,21 @@ const loadTeamContext = async (req, res, next) => {
         // Check if user has a current team set
         const userId = req.user.id;
 
-        // Get user's current team from database
-        const { pool } = require('../config/db');
-        const [userRows] = await pool.query(
-            `SELECT current_team_id FROM users WHERE id = ?`,
-            [userId]
-        );
+        // Target team can come from header or user's current choice
+        const headerTeamId = req.headers['x-team-id'];
+        let currentTeamId;
 
-        const currentTeamId = userRows[0]?.current_team_id;
+        if (headerTeamId) {
+            currentTeamId = parseInt(headerTeamId);
+        } else {
+            // Get user's current team from database
+            const { pool } = require('../config/db');
+            const [userRows] = await pool.query(
+                `SELECT current_team_id FROM users WHERE id = ?`,
+                [userId]
+            );
+            currentTeamId = userRows[0]?.current_team_id;
+        }
 
         if (currentTeamId) {
             const team = await TeamModel.findById(currentTeamId);

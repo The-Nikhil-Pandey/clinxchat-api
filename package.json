@@ -19,6 +19,7 @@
     "mysql2": "^3.6.5",
     "nodemailer": "^7.0.12",
     "socket.io": "^4.7.2",
+    "stripe": "^20.2.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
