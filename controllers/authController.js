@@ -374,9 +374,39 @@ class AuthController {
                 });
             }
 
+            // Get user's current team and teams list
+            const { pool } = require('../config/db');
+            const TeamModel = require('../models/teamModel');
+
+            let currentTeam = null;
+            let teamRole = null;
+            let teams = [];
+
+            // Get user's current_team_id
+            const [userRows] = await pool.query(
+                `SELECT current_team_id FROM users WHERE id = ?`,
+                [req.user.id]
+            );
+
+            const currentTeamId = userRows[0]?.current_team_id;
+
+            if (currentTeamId) {
+                currentTeam = await TeamModel.findById(currentTeamId);
+                teamRole = await TeamModel.getUserRole(currentTeamId, req.user.id);
+            }
+
+            // Get all teams user belongs to
+            teams = await TeamModel.findByUserId(req.user.id);
+
             res.status(200).json({
                 success: true,
-                data: user
+                data: {
+                    ...user,
+                    current_team: currentTeam,
+                    team_role: teamRole,
+                    teams: teams,
+                    has_team: teams.length > 0
+                }
             });
         } catch (error) {
             console.error('Get profile error:', error);

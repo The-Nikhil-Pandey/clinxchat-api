@@ -20,6 +20,12 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 
+// SaaS Routes
+const teamRoutes = require('./routes/teamRoutes');
+const inviteRoutes = require('./routes/inviteRoutes');
+const channelRoutes = require('./routes/channelRoutes');
+const billingRoutes = require('./routes/billingRoutes');
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
@@ -71,6 +77,12 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
+
+// SaaS Routes
+app.use('/api/teams', teamRoutes);
+app.use('/api/invites', inviteRoutes);
+app.use('/api/channels', channelRoutes);
+app.use('/api/billing', billingRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

@@ -208,6 +208,20 @@ const initializeDatabase = async () => {
         } catch (e) {
             console.error('Failed to ensure group_type column:', e.message || e);
         }
+
+        // Ensure is_mandatory column exists for groups
+        try {
+            const [cols] = await pool.query(
+                `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'groups' AND COLUMN_NAME = 'is_mandatory'`
+            );
+            if (cols[0] && cols[0].cnt === 0) {
+                await pool.query(`ALTER TABLE \`groups\` ADD COLUMN is_mandatory BOOLEAN DEFAULT FALSE`);
+                await pool.query(`ALTER TABLE \`groups\` ADD COLUMN allow_member_edit BOOLEAN DEFAULT TRUE`);
+                console.log('ℹ️ Added is_mandatory and allow_member_edit columns to groups table');
+            }
+        } catch (e) {
+            console.error('Failed to ensure is_mandatory column:', e.message || e);
+        }
         console.log('✅ Groups table initialized');
 
         // Create group_members table
@@ -329,6 +343,189 @@ const initializeDatabase = async () => {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
         console.log('✅ Notifications table initialized');
+
+        // =====================================================
+        // SaaS TABLES - Teams, Channels, Billing
+        // =====================================================
+
+        // Create teams table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS teams (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                name VARCHAR(100) NOT NULL,
+                slug VARCHAR(100) UNIQUE NOT NULL,
+                description TEXT,
+                logo VARCHAR(255),
+                owner_id INT NOT NULL,
+                plan ENUM('free', 'pro', 'enterprise') DEFAULT 'free',
+                member_limit INT DEFAULT 5,
+                stripe_customer_id VARCHAR(255),
+                stripe_subscription_id VARCHAR(255),
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP NULL,
+                FOREIGN KEY (owner_id) REFERENCES users(id),
+                INDEX idx_slug (slug),
+                INDEX idx_owner (owner_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Teams table initialized');
+
+        // Create team_members table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS team_members (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                team_id INT NOT NULL,
+                user_id INT NOT NULL,
+                role ENUM('owner', 'admin', 'member') DEFAULT 'member',
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_team_member (team_id, user_id),
+                INDEX idx_team_id (team_id),
+                INDEX idx_user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Team members table initialized');
+
+        // Create team_invites table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS team_invites (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                team_id INT NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                token VARCHAR(255) UNIQUE NOT NULL,
+                role ENUM('admin', 'member') DEFAULT 'member',
+                invited_by INT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                accepted_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                FOREIGN KEY (invited_by) REFERENCES users(id),
+                INDEX idx_token (token),
+                INDEX idx_email (email),
+                INDEX idx_team (team_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Team invites table initialized');
+
+        // Create channels table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS channels (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                team_id INT NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                type ENUM('public', 'private', 'dm') DEFAULT 'public',
+                is_default BOOLEAN DEFAULT FALSE,
+                is_archived BOOLEAN DEFAULT FALSE,
+                created_by INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP NULL,
+                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+                INDEX idx_team (team_id),
+                INDEX idx_type (type)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Channels table initialized');
+
+        // Create channel_members table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS channel_members (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                channel_id INT NOT NULL,
+                user_id INT NOT NULL,
+                is_muted BOOLEAN DEFAULT FALSE,
+                last_read_at TIMESTAMP NULL,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_channel_member (channel_id, user_id),
+                INDEX idx_channel (channel_id),
+                INDEX idx_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Channel members table initialized');
+
+        // Create subscriptions table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                team_id INT NOT NULL,
+                stripe_subscription_id VARCHAR(255) UNIQUE,
+                stripe_customer_id VARCHAR(255),
+                status ENUM('active', 'canceled', 'past_due', 'trialing', 'incomplete') DEFAULT 'active',
+                plan ENUM('free', 'pro', 'enterprise') DEFAULT 'free',
+                quantity INT DEFAULT 0,
+                current_period_start TIMESTAMP NULL,
+                current_period_end TIMESTAMP NULL,
+                cancel_at_period_end BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                INDEX idx_team (team_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Subscriptions table initialized');
+
+        // Create payments table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS payments (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                team_id INT NOT NULL,
+                stripe_payment_intent_id VARCHAR(255),
+                stripe_invoice_id VARCHAR(255),
+                amount DECIMAL(10, 2) NOT NULL,
+                currency VARCHAR(3) DEFAULT 'GBP',
+                status ENUM('pending', 'succeeded', 'failed', 'refunded') DEFAULT 'pending',
+                description VARCHAR(255),
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                INDEX idx_team (team_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Payments table initialized');
+
+        // Add current_team_id to users table if not exists
+        try {
+            const [cols] = await pool.query(`
+                SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'current_team_id'
+            `);
+            if (cols[0] && cols[0].cnt === 0) {
+                await pool.query(`ALTER TABLE users ADD COLUMN current_team_id INT NULL`);
+                console.log('ℹ️ Added current_team_id column to users table');
+            }
+        } catch (e) {
+            console.error('Failed to add current_team_id:', e.message);
+        }
+
+        // Add team_id and channel_id to messages table if not exists
+        try {
+            const [cols1] = await pool.query(`
+                SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'team_id'
+            `);
+            if (cols1[0] && cols1[0].cnt === 0) {
+                await pool.query(`ALTER TABLE messages ADD COLUMN team_id INT NULL`);
+                console.log('ℹ️ Added team_id column to messages table');
+            }
+
+            const [cols2] = await pool.query(`
+                SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'channel_id'
+            `);
+            if (cols2[0] && cols2[0].cnt === 0) {
+                await pool.query(`ALTER TABLE messages ADD COLUMN channel_id INT NULL`);
+                console.log('ℹ️ Added channel_id column to messages table');
+            }
+        } catch (e) {
+            console.error('Failed to add message columns:', e.message);
+        }
 
         console.log('✅ All tables initialized successfully');
         return true;

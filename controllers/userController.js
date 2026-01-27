@@ -36,10 +36,40 @@ class UserController {
     /**
      * Get all users
      * GET /api/users
+     * Team-scoped: Returns only users in the same team
      */
     static async getAll(req, res) {
         try {
-            const users = await UserModel.findAll();
+            const { pool } = require('../config/db');
+
+            // Get user's current team
+            const [userRows] = await pool.query(
+                `SELECT current_team_id FROM users WHERE id = ?`,
+                [req.user.id]
+            );
+
+            const teamId = userRows[0]?.current_team_id;
+
+            if (!teamId) {
+                // No team - return empty or just the current user
+                return res.status(200).json({
+                    success: true,
+                    data: [],
+                    message: 'Join or create a team to see other users'
+                });
+            }
+
+            // Get team members only
+            const [users] = await pool.query(
+                `SELECT u.id, u.name, u.email, u.role, u.department, u.profile_picture, 
+                        u.active_status, u.created_at, tm.role as team_role
+                 FROM users u
+                 JOIN team_members tm ON u.id = tm.user_id
+                 WHERE tm.team_id = ? AND u.is_active = TRUE AND u.id != ?
+                 ORDER BY u.name ASC`,
+                [teamId, req.user.id]
+            );
+
             res.status(200).json({
                 success: true,
                 data: users
@@ -57,6 +87,7 @@ class UserController {
     /**
      * Search users
      * GET /api/users/search?q=
+     * Team-scoped: Searches only within the user's current team
      */
     static async search(req, res) {
         try {
@@ -68,7 +99,40 @@ class UserController {
                 });
             }
 
-            const users = await UserModel.search(query, req.user.id);
+            const { pool } = require('../config/db');
+
+            // Get user's current team
+            const [userRows] = await pool.query(
+                `SELECT current_team_id FROM users WHERE id = ?`,
+                [req.user.id]
+            );
+
+            const teamId = userRows[0]?.current_team_id;
+
+            if (!teamId) {
+                return res.status(200).json({
+                    success: true,
+                    data: [],
+                    message: 'Join or create a team to search users'
+                });
+            }
+
+            // Search within team only
+            const searchPattern = `%${query}%`;
+            const [users] = await pool.query(
+                `SELECT u.id, u.name, u.email, u.role, u.department, u.profile_picture, 
+                        u.active_status, tm.role as team_role
+                 FROM users u
+                 JOIN team_members tm ON u.id = tm.user_id
+                 WHERE tm.team_id = ? 
+                   AND u.is_active = TRUE 
+                   AND u.id != ?
+                   AND (u.name LIKE ? OR u.email LIKE ?)
+                 ORDER BY u.name ASC
+                 LIMIT 50`,
+                [teamId, req.user.id, searchPattern, searchPattern]
+            );
+
             res.status(200).json({
                 success: true,
                 data: users

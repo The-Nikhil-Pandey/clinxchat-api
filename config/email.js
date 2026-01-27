@@ -139,8 +139,42 @@ const generateOtp = (length = 5) => {
     return otp;
 };
 
+/**
+ * Send generic email
+ * @param {object} options - Email options
+ * @param {string} options.to - Recipient email
+ * @param {string} options.subject - Email subject
+ * @param {string} options.html - HTML content
+ * @returns {Promise<boolean>} - Success status
+ */
+const sendEmail = async ({ to, subject, html }) => {
+    if (!transporter) {
+        console.error('Email transporter not initialized');
+        console.log(`📧 [DEV MODE] Email to ${to}: ${subject}`);
+        return true; // Return true for development
+    }
+
+    const mailOptions = {
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: to,
+        subject: subject,
+        html: html,
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`✅ Email sent to ${to}: ${subject}`);
+        return true;
+    } catch (error) {
+        console.error('Failed to send email:', error.message);
+        console.log(`📧 [FALLBACK] Email to ${to}: ${subject}`);
+        return false;
+    }
+};
+
 module.exports = {
     initializeEmail,
     sendOtpEmail,
+    sendEmail,
     generateOtp,
 };

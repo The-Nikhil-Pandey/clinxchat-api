@@ -10,10 +10,10 @@ class GroupModel {
      */
     static async isSystemGroup(groupId) {
         const [rows] = await pool.query(
-            'SELECT is_system_group FROM `groups` WHERE id = ?',
+            'SELECT is_mandatory FROM `groups` WHERE id = ?',
             [groupId]
         );
-        return rows[0]?.is_system_group === 1;
+        return rows[0]?.is_mandatory === 1;
     }
 
     /**
@@ -24,7 +24,7 @@ class GroupModel {
             SELECT g.*, 
                    (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
             FROM \`groups\` g 
-            WHERE g.is_system_group = TRUE
+            WHERE g.is_mandatory = TRUE
             ORDER BY g.id ASC
         `);
         return rows;

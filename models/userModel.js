@@ -38,7 +38,7 @@ class UserModel {
             // Add user to all mandatory groups
             await connection.query(`
                 INSERT INTO group_members (group_id, user_id, role)
-                SELECT id, ?, 'member' FROM \`groups\` WHERE is_system_group = TRUE
+                SELECT id, ?, 'member' FROM \`groups\` WHERE is_mandatory = TRUE
             `, [userId]);
 
             // Add user to mandatory group chats
@@ -46,7 +46,7 @@ class UserModel {
                 INSERT INTO chat_participants (chat_id, user_id)
                 SELECT c.id, ? FROM chats c
                 JOIN \`groups\` g ON c.group_id = g.id
-                WHERE g.is_system_group = TRUE
+                WHERE g.is_mandatory = TRUE
             `, [userId]);
 
             await connection.commit();
@@ -71,7 +71,11 @@ class UserModel {
      */
     static async findByEmail(email) {
         const [rows] = await pool.query(
-            'SELECT * FROM users WHERE email = ? AND is_active = TRUE',
+            `SELECT id, name, email, password, role, department, profile_picture, 
+                    active_status, profile_visibility, read_receipts, 
+                    online_visibility, two_factor_enabled, current_team_id,
+                    is_active, created_at, updated_at 
+             FROM users WHERE email = ? AND is_active = TRUE`,
             [email]
         );
         return rows[0] || null;
@@ -85,6 +89,7 @@ class UserModel {
             `SELECT id, name, email, role, department, profile_picture, 
                     active_status, profile_visibility, read_receipts, 
                     online_visibility, two_factor_enabled,
+                    current_team_id,
                     is_active, created_at, updated_at 
              FROM users WHERE id = ?`,
             [id]
