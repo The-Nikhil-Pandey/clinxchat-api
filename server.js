@@ -3,7 +3,13 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const result = dotenv.config({ path: path.join(__dirname, '.env') });
+if (result.error) {
+    console.error('❌ Failed to load .env file:', result.error);
+} else {
+    console.log('✅ .env file loaded successfully');
+}
 
 const { testConnection, initializeDatabase } = require('./config/db');
 const { initializeSocket } = require('./services/socketHandler');
@@ -25,6 +31,18 @@ const teamRoutes = require('./routes/teamRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const channelRoutes = require('./routes/channelRoutes');
 const billingRoutes = require('./routes/billingRoutes');
+
+// Stripe Debug Endpoint (Internal Check)
+app.get('/api/stripe-check', (req, res) => {
+    const key = process.env.STRIPE_SECRET_KEY;
+    res.json({
+        success: true,
+        env_loaded: !!key,
+        key_exists: !!key,
+        key_start: key ? key.substring(0, 7) + '...' : 'none',
+        node_env: process.env.NODE_ENV || 'development'
+    });
+});
 
 const app = express();
 const server = http.createServer(app);
