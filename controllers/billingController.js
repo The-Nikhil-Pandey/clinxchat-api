@@ -127,7 +127,7 @@ class BillingController {
                     quantity: extraMembers
                 }],
                 mode: 'subscription',
-                success_url: `${process.env.APP_URL || 'http://localhost:8081'}/team-dashboard?success=true`,
+                success_url: `${process.env.APP_URL || 'http://localhost:8081'}/team-dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
                 cancel_url: `${process.env.APP_URL || 'http://localhost:8081'}/team-dashboard?canceled=true`,
                 metadata: {
                     team_id: teamId.toString(),
