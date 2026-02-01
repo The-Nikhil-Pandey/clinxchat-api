@@ -32,6 +32,8 @@ const inviteRoutes = require('./routes/inviteRoutes');
 const channelRoutes = require('./routes/channelRoutes');
 const billingRoutes = require('./routes/billingRoutes');
 
+const app = express();
+
 // Stripe Debug Endpoint (Internal Check)
 app.get('/api/stripe-check', (req, res) => {
     const key = process.env.STRIPE_SECRET_KEY;
@@ -43,8 +45,6 @@ app.get('/api/stripe-check', (req, res) => {
         node_env: process.env.NODE_ENV || 'development'
     });
 });
-
-const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 
