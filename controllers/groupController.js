@@ -257,6 +257,28 @@ class GroupController {
     }
 
     /**
+     * Get common groups between two users
+     * GET /api/groups/common/:userId
+     */
+    static async getCommonGroups(req, res) {
+        try {
+            const otherUserId = parseInt(req.params.userId);
+            const groups = await GroupModel.getCommonGroups(req.user.id, otherUserId);
+            res.status(200).json({
+                success: true,
+                data: groups
+            });
+        } catch (error) {
+            console.error('Get common groups error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get common groups',
+                error: error.message
+            });
+        }
+    }
+
+    /**
      * Add member to group
      * POST /api/groups/:id/members
      */
@@ -306,8 +328,7 @@ class GroupController {
 
                 // Notify admins about the join request
                 const NotificationModel = require('../models/notificationModel');
-                const admins = await GroupModel.getMembers(groupId);
-                const adminUsers = admins.filter(a => a.role === 'admin');
+                const adminUsers = members.filter(a => a.role === 'admin');
                 for (const admin of adminUsers) {
                     await NotificationModel.create({
                         userId: admin.id,
@@ -328,9 +349,32 @@ class GroupController {
             if (chat) {
                 const { pool } = require('../config/db');
                 await pool.query(
-                    'INSERT IGNORE INTO chat_participants (chat_id, user_id) VALUES (?, ?)',
+                    'INSERT INTO chat_participants (chat_id, user_id, exited_at) VALUES (?, ?, NULL) ON DUPLICATE KEY UPDATE exited_at = NULL',
                     [chat.id, userId]
                 );
+
+                // CREATE SYSTEM MESSAGE: User was added
+                const addedUser = await UserModel.findById(userId);
+                const addedBy = await UserModel.findById(req.user.id);
+                await MessageModel.create({
+                    chatId: chat.id,
+                    senderId: req.user.id,
+                    messageType: 'system',
+                    content: `${addedBy.id === addedUser.id ? addedUser.name + ' joined' : addedBy.name + ' added ' + addedUser.name}`
+                });
+
+                // Emit system message to group
+                if (req.app.get('io')) {
+                    req.app.get('io').to(`group:${groupId}`).emit('receive_message', {
+                        groupId,
+                        chatId: chat.id,
+                        message: {
+                            message_type: 'system',
+                            content: `${addedBy.id === addedUser.id ? addedUser.name + ' joined' : addedBy.name + ' added ' + addedUser.name}`,
+                            created_at: new Date()
+                        }
+                    });
+                }
             }
 
             // Get group info for notification
@@ -421,17 +465,54 @@ class GroupController {
                 });
             }
 
-            const removed = await GroupModel.removeMember(groupId, userId);
-            if (!removed) {
+            const result = await GroupModel.removeMember(groupId, userId);
+            if (!result) {
                 return res.status(404).json({
                     success: false,
                     message: 'Member not found'
                 });
             }
 
+            // Create System Message: Member Left
+            const chat = await ChatModel.findByGroupId(groupId);
+            if (chat) {
+                const userObj = await UserModel.findById(userId);
+                const requester = await UserModel.findById(req.user.id);
+                let content = isSelf ? `${userObj.name} left` : `${requester.name} removed ${userObj.name}`;
+
+                if (result.promotedUser) {
+                    content += `. ${result.promotedUser.name} is now an admin.`;
+                }
+
+                await MessageModel.create({
+                    chatId: chat.id,
+                    senderId: req.user.id,
+                    messageType: 'system',
+                    content: content
+                });
+
+                if (req.app.get('io')) {
+                    req.app.get('io').to(`group:${groupId}`).emit('receive_message', {
+                        groupId,
+                        chatId: chat.id,
+                        message: {
+                            message_type: 'system',
+                            content: content,
+                            created_at: new Date()
+                        }
+                    });
+
+                    // If self, tell user they left (to disable input)
+                    if (isSelf) {
+                        req.app.get('io').to(`user:${userId}`).emit('group_left', { groupId });
+                    }
+                }
+            }
+
             res.status(200).json({
                 success: true,
-                message: isSelf ? 'You left the group' : 'Member removed successfully'
+                message: isSelf ? 'You left the group' : 'Member removed successfully',
+                promotedUser: result.promotedUser
             });
         } catch (error) {
             console.error('Remove member error:', error);
@@ -859,7 +940,7 @@ class GroupController {
     static async sendMessage(req, res) {
         try {
             const groupId = parseInt(req.params.id);
-            const { content, messageType, filePath, duration } = req.body;
+            const { content, messageType, filePath, duration, metadata } = req.body;
 
             // Check membership
             const membership = await GroupModel.isMember(groupId, req.user.id);
@@ -902,7 +983,8 @@ class GroupController {
                 messageType: messageType || 'text',
                 content,
                 filePath,
-                duration
+                duration,
+                metadata
             });
 
             // Emit to group room
@@ -988,7 +1070,7 @@ class GroupController {
             }
 
             // Get messages
-            const messages = await MessageModel.findByChatId(chat.id, limit, offset);
+            const messages = await MessageModel.findByChatId(chat.id, req.user.id, limit, offset);
 
             res.status(200).json({
                 success: true,

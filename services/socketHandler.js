@@ -232,14 +232,22 @@ const initializeSocket = (io) => {
         });
 
         // Handle disconnect
-        socket.on('disconnect', () => {
+        socket.on('disconnect', async () => {
             console.log(`🔌 User disconnected: ${socket.user.name} (${userId})`);
             onlineUsers.delete(userId);
 
-            // Broadcast offline status
+            // Persist last seen
+            try {
+                await UserModel.updateLastSeen(userId);
+            } catch (e) {
+                console.error('Failed to update last seen:', e.message);
+            }
+
+            // Broadcast offline status with last seen timestamp (current time)
             socket.broadcast.emit('user_offline', {
                 userId,
-                name: socket.user.name
+                name: socket.user.name,
+                last_seen: new Date().toISOString()
             });
         });
     });

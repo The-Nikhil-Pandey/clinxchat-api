@@ -1,3 +1,5 @@
+const path = require('path');
+const fs = require('fs');
 const UserModel = require('../models/userModel');
 
 /**
@@ -26,7 +28,7 @@ class UserController {
             let maskedUser = { ...user };
 
             // 1. Online status visibility
-            if (!user.online_visibility && requestedId !== requesterId) {
+            if (user.online_visibility === 'nobody' && requestedId !== requesterId) {
                 maskedUser.active_status = null;
             }
 
@@ -46,7 +48,9 @@ class UserController {
                 const visibility = user.profile_visibility || 'everyone';
 
                 if (visibility === 'nobody') {
-                    // Minimal data
+                    // Minimal data - Only ID, Name, Photo (maybe?), and Restricted flag
+                    // The user specifically requested a themed alert when trying to view.
+                    // We return is_restricted: true so frontend knows to block.
                     maskedUser = {
                         id: user.id,
                         name: user.name,
@@ -55,7 +59,6 @@ class UserController {
                         is_restricted: true
                     };
                 } else if (visibility === 'contacts' && !isContact) {
-                    // Minimal data
                     maskedUser = {
                         id: user.id,
                         name: user.name,
@@ -120,7 +123,7 @@ class UserController {
             // Respect online_visibility
             const maskedUsers = users.map(u => ({
                 ...u,
-                active_status: u.online_visibility ? u.active_status : null,
+                active_status: u.online_visibility !== 'nobody' ? u.active_status : null,
                 online_visibility: undefined // Remove from output
             }));
 
@@ -190,7 +193,7 @@ class UserController {
             // Respect online_visibility
             const maskedUsers = users.map(u => ({
                 ...u,
-                active_status: u.online_visibility ? u.active_status : null,
+                active_status: u.online_visibility !== 'nobody' ? u.active_status : null,
                 online_visibility: undefined
             }));
 
@@ -224,8 +227,25 @@ class UserController {
                 });
             }
 
-            const { name, department } = req.body;
-            const updated = await UserModel.update(userId, { name, department });
+            const { name, department, dob, profile_picture } = req.body;
+
+            // Handle file cleanup if profile_picture is changing or being removed
+            if (profile_picture !== undefined) {
+                const user = await UserModel.findById(userId);
+                if (user && user.profile_picture && user.profile_picture !== profile_picture) {
+                    try {
+                        const { UPLOAD_PATH } = require('../config/multerConfig');
+                        const oldPath = path.join(UPLOAD_PATH, user.profile_picture);
+                        if (fs.existsSync(oldPath)) {
+                            fs.unlinkSync(oldPath);
+                        }
+                    } catch (err) {
+                        console.error('Error deleting old profile picture:', err);
+                    }
+                }
+            }
+
+            const updated = await UserModel.update(userId, { name, department, dob, profile_picture });
 
             if (!updated) {
                 return res.status(404).json({
@@ -266,12 +286,11 @@ class UserController {
             }
 
             const { status } = req.body;
-            const validStatuses = ['available', 'away', 'dnd'];
 
-            if (!status || !validStatuses.includes(status)) {
+            if (!status) {
                 return res.status(400).json({
                     success: false,
-                    message: 'Invalid status. Use: available, away, or dnd'
+                    message: 'Status is required'
                 });
             }
 
@@ -388,7 +407,7 @@ class UserController {
                 active_status,
                 profile_visibility,
                 read_receipts,
-                online_visibility,
+                online_visibility: online_visibility || 'everyone',
                 two_factor_enabled
             });
 
@@ -497,6 +516,41 @@ class UserController {
             res.status(500).json({
                 success: false,
                 message: 'Failed to remove device',
+                error: error.message
+            });
+        }
+    }
+
+    /**
+     * Get users with birthdays today
+     * GET /api/users/birthdays
+     */
+    static async getBirthdays(req, res) {
+        try {
+            const { pool } = require('../config/db');
+            const [userRows] = await pool.query(
+                `SELECT current_team_id FROM users WHERE id = ?`,
+                [req.user.id]
+            );
+
+            const teamId = userRows[0]?.current_team_id;
+            if (!teamId) {
+                return res.status(200).json({
+                    success: true,
+                    data: []
+                });
+            }
+
+            const birthdays = await UserModel.getTodayBirthdays(teamId);
+            res.status(200).json({
+                success: true,
+                data: birthdays
+            });
+        } catch (error) {
+            console.error('Get birthdays error:', error);
+            res.status(500).json({
+                success: false,
+                message: 'Failed to get birthdays',
                 error: error.message
             });
         }

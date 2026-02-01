@@ -34,7 +34,7 @@ const PORT = process.env.PORT || 3000;
 const io = new Server(server, {
     cors: {
         origin: '*',
-        methods: ['GET', 'POST', 'PUT', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
     }
 });
 
@@ -47,7 +47,7 @@ initializeSocket(io);
 // Middleware - CORS with full support for file uploads
 app.use(cors({
     origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     credentials: false,
     maxAge: 86400

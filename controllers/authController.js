@@ -94,7 +94,7 @@ class AuthController {
      */
     static async verifyOtpAndRegister(req, res) {
         try {
-            const { name, email, password, otp, role, department } = req.body;
+            const { name, email, password, otp, role, department, dob } = req.body;
 
             // Validate required fields
             if (!email || !otp || !name || !password) {
@@ -123,7 +123,8 @@ class AuthController {
                 email,
                 hashedPassword,
                 role: role || 'clinical_staff',
-                department
+                department,
+                dob
             });
 
             // Generate token

@@ -15,7 +15,19 @@ router.post('/private/send', ChatController.sendPrivateMessage);
 
 // Chat message operations
 router.get('/:chatId/messages', ChatController.getMessages);
+router.get('/:chatId/messages/search', ChatController.searchMessages);
 router.get('/:chatId/media', ChatController.getChatMedia);
-router.put('/:chatId/seen', ChatController.markAsSeen);
+// Message deletion
+router.delete('/messages/:messageId/everyone', ChatController.deleteForEveryone);
+router.delete('/messages/:messageId/me', ChatController.deleteForMe);
+router.delete('/messages/bulk/everyone', ChatController.bulkDeleteMessagesForEveryone);
+router.delete('/messages/bulk/me', ChatController.bulkDeleteMessagesForMe);
+router.delete('/:chatId/clear', ChatController.clearChat);
+
+// Bulk operations
+router.put('/bulk/favorite', ChatController.bulkFavorite);
+router.put('/bulk/archive', ChatController.bulkArchive);
+router.put('/bulk/pin', ChatController.bulkPin);
+router.delete('/bulk/delete', ChatController.bulkDelete);
 
 module.exports = router;

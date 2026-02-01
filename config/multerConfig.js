@@ -31,14 +31,15 @@ const chatMediaStorage = multer.diskStorage({
     destination: (req, file, cb) => {
         const chatId = req.body.chatId || req.params.chatId;
         let subFolder = 'images';
+        const ext = path.extname(file.originalname).toLowerCase();
 
-        if (file.mimetype.startsWith('image/')) {
+        if (file.mimetype.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
             subFolder = 'images';
-        } else if (file.mimetype === 'application/pdf') {
+        } else if (file.mimetype === 'application/pdf' || ext === '.pdf') {
             subFolder = 'pdf';
-        } else if (file.mimetype.startsWith('audio/')) {
+        } else if (file.mimetype.startsWith('audio/') || ['.mp3', '.wav', '.m4a', '.aac'].includes(ext)) {
             subFolder = 'voice';
-        } else if (file.mimetype.startsWith('video/')) {
+        } else if (file.mimetype.startsWith('video/') || ['.mp4', '.mov', '.webm', '.3gp'].includes(ext)) {
             subFolder = 'video';
         }
 

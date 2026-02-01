@@ -86,12 +86,13 @@ const initializeDatabase = async () => {
                 role ENUM('admin', 'clinical_staff') DEFAULT 'clinical_staff',
                 department VARCHAR(100),
                 profile_picture VARCHAR(255),
-                active_status ENUM('available', 'away', 'dnd') DEFAULT 'available',
+                active_status VARCHAR(100) DEFAULT 'Available',
                 profile_visibility ENUM('everyone', 'contacts', 'nobody') DEFAULT 'everyone',
                 read_receipts BOOLEAN DEFAULT TRUE,
-                online_visibility BOOLEAN DEFAULT TRUE,
+                online_visibility ENUM('everyone', 'nobody') DEFAULT 'everyone',
                 two_factor_enabled BOOLEAN DEFAULT FALSE,
                 two_factor_secret VARCHAR(255),
+                last_seen TIMESTAMP NULL,
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -99,54 +100,120 @@ const initializeDatabase = async () => {
                 INDEX idx_role (role)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         `);
+
+        // Ensure last_seen column exists
+        try {
+            const [rows] = await pool.query(`SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'last_seen'`);
+            if (rows[0] && rows[0].cnt === 0) {
+                await pool.query('ALTER TABLE users ADD COLUMN last_seen TIMESTAMP NULL');
+                console.log('ℹ️ Added missing column `last_seen` to `users` table');
+            }
+        } catch (e) {
+            console.error('Failed to ensure last_seen:', e.message);
+        }
+
+        // Ensure active_status is VARCHAR(100) (migration from ENUM)
+        try {
+            const [rows] = await pool.query(`
+                SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'active_status'
+            `);
+            if (rows[0] && rows[0].COLUMN_TYPE.includes('enum')) {
+                await pool.query('ALTER TABLE users MODIFY COLUMN active_status VARCHAR(100) DEFAULT "Available"');
+                console.log('ℹ️ Migrated `active_status` from ENUM to VARCHAR(100)');
+            }
+        } catch (e) {
+            console.error('Failed to migrate active_status:', e.message);
+        }
+
+        // Ensure online_visibility is ENUM (migration from BOOLEAN)
+        try {
+            const [rows] = await pool.query(`
+                SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'online_visibility'
+            `);
+            if (rows[0] && (rows[0].COLUMN_TYPE.includes('tinyint') || rows[0].COLUMN_TYPE.includes('int'))) {
+                // Convert existing booleans: 1 -> 'everyone', 0 -> 'nobody'
+                // First modify the column type
+                await pool.query("ALTER TABLE users MODIFY COLUMN online_visibility ENUM('everyone', 'nobody') DEFAULT 'everyone'");
+                console.log('ℹ️ Migrated `online_visibility` from BOOLEAN to ENUM');
+            }
+        } catch (e) {
+            console.error('Failed to migrate online_visibility:', e.message);
+        }
+
         console.log('✅ Users table initialized');
 
         // Create contacts table
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS contacts (
-                id INT PRIMARY KEY AUTO_INCREMENT,
-                user_id INT NOT NULL,
-                contact_user_id INT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY (contact_user_id) REFERENCES users(id) ON DELETE CASCADE,
-                UNIQUE KEY unique_contact (user_id, contact_user_id),
-                INDEX idx_user_id (user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
+            CREATE TABLE IF NOT EXISTS contacts(
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            contact_user_id INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(contact_user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_contact(user_id, contact_user_id),
+            INDEX idx_user_id(user_id)
+        ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci
+            `);
         console.log('✅ Contacts table initialized');
 
         // Create chats table
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS chats (
+            CREATE TABLE IF NOT EXISTS chats(
                 id INT PRIMARY KEY AUTO_INCREMENT,
                 type ENUM('private', 'group') NOT NULL,
                 group_id INT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_type (type),
-                INDEX idx_group_id (group_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
+                INDEX idx_type(type),
+                INDEX idx_group_id(group_id)
+            ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci
+                `);
         console.log('✅ Chats table initialized');
 
         // Create chat_participants table
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS chat_participants (
-                id INT PRIMARY KEY AUTO_INCREMENT,
-                chat_id INT NOT NULL,
-                user_id INT NOT NULL,
-                FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-                UNIQUE KEY unique_participant (chat_id, user_id),
-                INDEX idx_chat_id (chat_id),
-                INDEX idx_user_id (user_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
+            CREATE TABLE IF NOT EXISTS chat_participants(
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    chat_id INT NOT NULL,
+                    user_id INT NOT NULL,
+                    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE KEY unique_participant(chat_id, user_id),
+                    is_favourite BOOLEAN DEFAULT FALSE,
+                    is_archived BOOLEAN DEFAULT FALSE,
+                    is_pinned BOOLEAN DEFAULT FALSE,
+                    INDEX idx_chat_id(chat_id),
+                    INDEX idx_user_id(user_id)
+                ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci
+                    `);
         console.log('✅ Chat participants table initialized');
+
+        // Ensure missing columns exist in chat_participants
+        try {
+            const [cols] = await pool.query(`
+                SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat_participants'
+            `);
+            const existingCols = cols.map(c => c.COLUMN_NAME);
+
+            if (!existingCols.includes('is_favourite')) {
+                await pool.query('ALTER TABLE chat_participants ADD COLUMN is_favourite BOOLEAN DEFAULT FALSE');
+            }
+            if (!existingCols.includes('is_archived')) {
+                await pool.query('ALTER TABLE chat_participants ADD COLUMN is_archived BOOLEAN DEFAULT FALSE');
+            }
+            if (!existingCols.includes('is_pinned')) {
+                await pool.query('ALTER TABLE chat_participants ADD COLUMN is_pinned BOOLEAN DEFAULT FALSE');
+            }
+        } catch (e) {
+            console.error('Failed to ensure chat_participants columns:', e.message);
+        }
 
         // Create messages table
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS messages (
+            CREATE TABLE IF NOT EXISTS messages(
                 id INT PRIMARY KEY AUTO_INCREMENT,
                 chat_id INT NOT NULL,
                 sender_id INT NOT NULL,
@@ -154,16 +221,19 @@ const initializeDatabase = async () => {
                 content TEXT,
                 file_path VARCHAR(255),
                 duration INT,
+                metadata JSON,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 seen_at TIMESTAMP NULL,
                 delivered_at TIMESTAMP NULL,
-                FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
-                FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
-                INDEX idx_chat_id (chat_id),
-                INDEX idx_sender_id (sender_id),
-                INDEX idx_created_at (created_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `);
+                is_deleted_everyone BOOLEAN DEFAULT FALSE,
+                deleted_for_users JSON DEFAULT(JSON_ARRAY()),
+                FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_chat_id(chat_id),
+                INDEX idx_sender_id(sender_id),
+                INDEX idx_created_at(created_at)
+            ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci
+                `);
 
         // Ensure delivered_at column exists for messages table
         try {
@@ -172,9 +242,27 @@ const initializeDatabase = async () => {
                 await pool.query(`ALTER TABLE messages ADD COLUMN delivered_at TIMESTAMP NULL`);
                 console.log('ℹ️ Added missing column `delivered_at` to `messages` table');
             }
+            const [metaCols] = await pool.query(`SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'metadata'`);
+            if (metaCols[0] && metaCols[0].cnt === 0) {
+                await pool.query('ALTER TABLE messages ADD COLUMN metadata JSON AFTER duration');
+                console.log('ℹ️ Added missing column `metadata` to `messages` table');
+            }
         } catch (e) {
-            console.error('Failed to ensure delivered_at column:', e.message || e);
+            console.error('Failed to ensure delivered_at/metadata columns:', e.message || e);
         }
+
+        // Ensure deletion columns exist
+        try {
+            const [rows1] = await pool.query(`SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'is_deleted_everyone'`);
+            if (rows1[0] && rows1[0].cnt === 0) {
+                await pool.query('ALTER TABLE messages ADD COLUMN is_deleted_everyone BOOLEAN DEFAULT FALSE');
+            }
+            const [rows2] = await pool.query(`SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'messages' AND COLUMN_NAME = 'deleted_for_users'`);
+            if (rows2[0] && rows2[0].cnt === 0) {
+                await pool.query('ALTER TABLE messages ADD COLUMN deleted_for_users JSON DEFAULT (JSON_ARRAY())');
+            }
+        } catch (e) { console.error('Failed to ensure deletion columns:', e.message); }
+
         console.log('✅ Messages table initialized');
 
         // Create groups table

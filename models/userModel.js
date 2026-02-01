@@ -29,9 +29,9 @@ class UserModel {
 
             // Create user
             const [result] = await connection.query(
-                `INSERT INTO users (name, email, password, role, department) 
-                 VALUES (?, ?, ?, ?, ?)`,
-                [name, email, hashedPassword, role || 'clinical_staff', department || null]
+                `INSERT INTO users (name, email, password, role, department, dob) 
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [name, email, hashedPassword, role || 'clinical_staff', department || null, userData.dob || null]
             );
             const userId = result.insertId;
 
@@ -71,9 +71,10 @@ class UserModel {
      */
     static async findByEmail(email) {
         const [rows] = await pool.query(
-            `SELECT id, name, email, password, role, department, profile_picture, 
+            `SELECT id, name, email, password, role, department, dob, profile_picture, 
                     active_status, profile_visibility, read_receipts, 
                     online_visibility, two_factor_enabled, current_team_id,
+                    last_seen,
                     is_active, created_at, updated_at 
              FROM users WHERE email = ? AND is_active = TRUE`,
             [email]
@@ -86,10 +87,10 @@ class UserModel {
      */
     static async findById(id) {
         const [rows] = await pool.query(
-            `SELECT id, name, email, role, department, profile_picture, 
+            `SELECT id, name, email, role, department, dob, profile_picture, 
                     active_status, profile_visibility, read_receipts, 
                     online_visibility, two_factor_enabled,
-                    current_team_id,
+                    current_team_id, last_seen,
                     is_active, created_at, updated_at 
              FROM users WHERE id = ?`,
             [id]
@@ -137,7 +138,7 @@ class UserModel {
      * Update user profile
      */
     static async update(id, updateData) {
-        const { name, department, profile_picture } = updateData;
+        const { name, department, profile_picture, dob } = updateData;
 
         let sql = 'UPDATE users SET ';
         const updates = [];
@@ -154,6 +155,10 @@ class UserModel {
         if (profile_picture !== undefined) {
             updates.push('profile_picture = ?');
             params.push(profile_picture);
+        }
+        if (dob !== undefined) {
+            updates.push('dob = ?');
+            params.push(dob);
         }
 
         if (updates.length === 0) return false;
@@ -172,6 +177,17 @@ class UserModel {
         const [result] = await pool.query(
             'UPDATE users SET active_status = ? WHERE id = ?',
             [status, id]
+        );
+        return result.affectedRows > 0;
+    }
+
+    /**
+     * Update user last seen time
+     */
+    static async updateLastSeen(id) {
+        const [result] = await pool.query(
+            'UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = ?',
+            [id]
         );
         return result.affectedRows > 0;
     }
@@ -217,7 +233,8 @@ class UserModel {
             active_status,
             profile_visibility,
             read_receipts,
-            online_visibility
+            online_visibility,
+            two_factor_enabled
         } = settings;
 
         let sql = 'UPDATE users SET ';
@@ -325,6 +342,23 @@ class UserModel {
             'UPDATE user_devices SET last_active = CURRENT_TIMESTAMP WHERE id = ?',
             [deviceId]
         );
+    }
+
+    /**
+     * Get users with birthdays today
+     */
+    static async getTodayBirthdays(teamId) {
+        const [rows] = await pool.query(
+            `SELECT u.id, u.name, u.profile_picture, u.dob
+             FROM users u
+             JOIN team_members tm ON u.id = tm.user_id
+             WHERE tm.team_id = ? 
+             AND u.is_active = TRUE
+             AND MONTH(u.dob) = MONTH(CURRENT_DATE())
+             AND DAY(u.dob) = DAY(CURRENT_DATE())`,
+            [teamId]
+        );
+        return rows;
     }
 }
 

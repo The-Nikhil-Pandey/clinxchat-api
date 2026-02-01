@@ -8,7 +8,8 @@ router.use(authenticate);
 
 // Profile routes (must be before /:id)
 router.get('/profile', UserController.getProfile);
-router.put('/profile/settings', UserController.updateSettings);
+router.get('/birthdays', UserController.getBirthdays);
+router.patch('/profile/settings', UserController.updateSettings);
 
 // Device routes
 router.get('/devices', UserController.getDevices);
@@ -22,7 +23,7 @@ router.get('/search', UserController.search);
 router.get('/', UserController.getAll);
 router.get('/:id', UserController.getById);
 router.put('/:id', UserController.update);
-router.put('/:id/status', UserController.updateStatus);
+router.patch('/:id/status', UserController.updateStatus);
 router.delete('/:id', UserController.delete);
 
 module.exports = router;

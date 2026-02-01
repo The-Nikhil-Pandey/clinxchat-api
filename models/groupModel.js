@@ -202,11 +202,87 @@ class GroupModel {
             throw new Error('Members cannot be removed from mandatory groups');
         }
 
-        const [result] = await pool.query(
-            'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
-            [groupId, userId]
-        );
-        return result.affectedRows > 0;
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            // 1. Get member details
+            const [memberRows] = await connection.query(
+                'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+                [groupId, userId]
+            );
+            if (memberRows.length === 0) return false;
+            const leavingMemberRole = memberRows[0].role;
+
+            // 2. Remove from group_members
+            await connection.query(
+                'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
+                [groupId, userId]
+            );
+
+            // 3. Update chat_participants to 'exited'
+            const [chatRows] = await connection.query('SELECT id FROM chats WHERE group_id = ?', [groupId]);
+            if (chatRows.length > 0) {
+                await connection.query(
+                    'UPDATE chat_participants SET exited_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND user_id = ?',
+                    [chatRows[0].id, userId]
+                );
+            }
+
+            // 4. Handle Owner Exit
+            const [groupRows] = await connection.query('SELECT created_by FROM `groups` WHERE id = ?', [groupId]);
+            let promotedUser = null;
+            if (groupRows.length > 0 && groupRows[0].created_by === userId) {
+                // Owner is leaving, promote someone else
+                const [admins] = await connection.query(
+                    'SELECT user_id FROM group_members WHERE group_id = ? AND role = "admin" ORDER BY joined_at ASC LIMIT 1',
+                    [groupId]
+                );
+
+                let nextOwnerId = null;
+                if (admins.length > 0) {
+                    nextOwnerId = admins[0].user_id;
+                } else {
+                    // No admins left, check moderators
+                    const [mods] = await connection.query(
+                        'SELECT user_id FROM group_members WHERE group_id = ? AND role = "moderator" ORDER BY joined_at ASC LIMIT 1',
+                        [groupId]
+                    );
+                    if (mods.length > 0) {
+                        nextOwnerId = mods[0].user_id;
+                    } else {
+                        // No mods, check members
+                        const [members] = await connection.query(
+                            'SELECT user_id FROM group_members WHERE group_id = ? ORDER BY joined_at ASC LIMIT 1',
+                            [groupId]
+                        );
+                        if (members.length > 0) nextOwnerId = members[0].user_id;
+                    }
+                }
+
+                if (nextOwnerId) {
+                    await connection.query(
+                        'UPDATE `groups` SET created_by = ? WHERE id = ?',
+                        [nextOwnerId, groupId]
+                    );
+                    await connection.query(
+                        'UPDATE group_members SET role = "admin" WHERE group_id = ? AND user_id = ?',
+                        [groupId, nextOwnerId]
+                    );
+
+                    const [promotedRows] = await connection.query('SELECT name FROM users WHERE id = ?', [nextOwnerId]);
+                    promotedUser = { id: nextOwnerId, name: promotedRows[0]?.name };
+                }
+            }
+
+            await connection.commit();
+            return { success: true, promotedUser };
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
     }
 
     /**
@@ -342,6 +418,22 @@ class GroupModel {
             [token]
         );
         return rows[0] || null;
+    }
+
+    /**
+     * Get common groups between two users
+     */
+    static async getCommonGroups(userId1, userId2) {
+        const [rows] = await pool.query(`
+            SELECT g.*, 
+                   (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
+            FROM \`groups\` g
+            JOIN group_members gm1 ON g.id = gm1.group_id
+            JOIN group_members gm2 ON g.id = gm2.group_id
+            WHERE gm1.user_id = ? AND gm2.user_id = ?
+            ORDER BY g.name ASC
+        `, [userId1, userId2]);
+        return rows;
     }
 }
 

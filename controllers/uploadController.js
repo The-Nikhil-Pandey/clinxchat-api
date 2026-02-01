@@ -25,6 +25,19 @@ class UploadController {
             const filePath = req.file.path.replace(/\\/g, '/');
             const relativePath = filePath.replace(UPLOAD_PATH.replace('./', ''), '');
 
+            // Handle file cleanup for old picture
+            const user = await UserModel.findById(req.user.id);
+            if (user && user.profile_picture && user.profile_picture !== relativePath) {
+                try {
+                    const oldPath = path.join(UPLOAD_PATH, user.profile_picture);
+                    if (fs.existsSync(oldPath)) {
+                        fs.unlinkSync(oldPath);
+                    }
+                } catch (err) {
+                    console.error('Error deleting old profile picture during upload:', err);
+                }
+            }
+
             // Update user profile picture
             await UserModel.update(req.user.id, {
                 profile_picture: relativePath

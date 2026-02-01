@@ -126,11 +126,14 @@ class ChatModel {
                     WHERE m.chat_id = c.id 
                     AND m.sender_id != ? 
                     AND m.seen_at IS NULL
-                ) as unread_count
+                ) as unread_count,
+                cp.is_favourite,
+                cp.is_archived,
+                cp.is_pinned
             FROM chats c
             JOIN chat_participants cp ON c.id = cp.chat_id
             WHERE cp.user_id = ?
-            ORDER BY (
+            ORDER BY cp.is_pinned DESC, (
                 SELECT MAX(m.created_at) 
                 FROM messages m 
                 WHERE m.chat_id = c.id
@@ -193,6 +196,31 @@ class ChatModel {
             [groupId]
         );
         return rows[0] || null;
+    }
+    /**
+     * Update bulk chat status for a user
+     */
+    static async updateBulkStatus(userId, chatIds, field, value) {
+        if (!['is_favourite', 'is_archived', 'is_pinned'].includes(field)) {
+            throw new Error('Invalid field');
+        }
+
+        await pool.query(
+            `UPDATE chat_participants SET ${field} = ? WHERE user_id = ? AND chat_id IN (?)`,
+            [value, userId, chatIds]
+        );
+        return true;
+    }
+
+    /**
+     * Delete chats for a user (removes their participation)
+     */
+    static async deleteChats(userId, chatIds) {
+        await pool.query(
+            'DELETE FROM chat_participants WHERE user_id = ? AND chat_id IN (?)',
+            [userId, chatIds]
+        );
+        return true;
     }
 }
 
