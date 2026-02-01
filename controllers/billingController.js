@@ -3,14 +3,29 @@ const TeamModel = require('../models/teamModel');
 
 // Stripe initialization - check if keys are configured
 let stripe;
-try {
-    if (process.env.STRIPE_SECRET_KEY) {
-        stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-        console.log('✅ Stripe initialized successfully');
+
+// Stripe initialization helper
+const getStripe = () => {
+    if (stripe) return stripe;
+
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+        console.error('❌ STRIPE_SECRET_KEY is missing from environment variables');
+        return null;
     }
-} catch (error) {
-    console.warn('❌ Stripe initialization failed:', error.message);
-}
+
+    try {
+        stripe = require('stripe')(key);
+        console.log('✅ Stripe initialized successfully');
+        return stripe;
+    } catch (error) {
+        console.error('❌ Stripe initialization failed:', error.message);
+        return null;
+    }
+};
+
+// Initial call to log status on startup
+getStripe();
 
 /**
  * Billing Controller - Handles Stripe payments and subscriptions
@@ -67,7 +82,7 @@ class BillingController {
      */
     static async createCheckout(req, res) {
         try {
-            if (!stripe) {
+            if (!getStripe()) {
                 return res.status(503).json({
                     success: false,
                     message: 'Stripe is not configured. Please add STRIPE_SECRET_KEY to your environment.'
@@ -91,7 +106,7 @@ class BillingController {
             let customerId = team.stripe_customer_id;
 
             if (!customerId) {
-                const customer = await stripe.customers.create({
+                const customer = await getStripe().customers.create({
                     email: req.user.email,
                     name: req.user.name,
                     metadata: {
@@ -109,7 +124,7 @@ class BillingController {
             }
 
             // Create checkout session
-            const session = await stripe.checkout.sessions.create({
+            const session = await getStripe().checkout.sessions.create({
                 customer: customerId,
                 payment_method_types: ['card'],
                 line_items: [{
@@ -169,12 +184,12 @@ class BillingController {
      */
     static async checkSessionStatus(req, res) {
         try {
-            if (!stripe) {
+            if (!getStripe()) {
                 return res.status(503).json({ success: false, message: 'Stripe not configured' });
             }
 
             const { sessionId } = req.params;
-            const session = await stripe.checkout.sessions.retrieve(sessionId);
+            const session = await getStripe().checkout.sessions.retrieve(sessionId);
 
             if (session.payment_status === 'paid') {
                 // If paid but webhook hasn't processed it yet, we can trigger the update here too
@@ -209,7 +224,7 @@ class BillingController {
      */
     static async handleWebhook(req, res) {
         try {
-            if (!stripe) {
+            if (!getStripe()) {
                 return res.status(503).json({ success: false, message: 'Stripe not configured' });
             }
 
@@ -217,7 +232,7 @@ class BillingController {
             let event;
 
             try {
-                event = stripe.webhooks.constructEvent(
+                event = getStripe().webhooks.constructEvent(
                     req.body,
                     sig,
                     process.env.STRIPE_WEBHOOK_SECRET
@@ -451,7 +466,7 @@ class BillingController {
      */
     static async cancelSubscription(req, res) {
         try {
-            if (!stripe) {
+            if (!getStripe()) {
                 return res.status(503).json({
                     success: false,
                     message: 'Stripe not configured'
@@ -473,7 +488,7 @@ class BillingController {
             }
 
             // Cancel at period end (not immediately)
-            await stripe.subscriptions.update(subs[0].stripe_subscription_id, {
+            await getStripe().subscriptions.update(subs[0].stripe_subscription_id, {
                 cancel_at_period_end: true
             });
 
