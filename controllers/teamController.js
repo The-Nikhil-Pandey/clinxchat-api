@@ -16,6 +16,17 @@ class TeamController {
             const { name, description } = req.body;
             const userId = req.user.id;
 
+            // Check if user already owns a team/organization
+            const myTeams = await TeamModel.findByUserId(userId);
+            const ownedTeam = myTeams.find(t => t.user_role === 'owner');
+
+            if (ownedTeam) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You already own an organization. You cannot create multiple organizations.'
+                });
+            }
+
             if (!name || name.trim().length < 2) {
                 return res.status(400).json({
                     success: false,

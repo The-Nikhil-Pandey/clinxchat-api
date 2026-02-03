@@ -98,7 +98,16 @@ class UserController {
                 [req.user.id]
             );
 
-            const teamId = userRows[0]?.current_team_id;
+            let teamId = userRows[0]?.current_team_id;
+
+            if (!teamId) {
+                // FALLBACK: If current_team_id is null, check if they are a member of any team
+                const [memberRows] = await pool.query(
+                    `SELECT team_id FROM team_members WHERE user_id = ? LIMIT 1`,
+                    [req.user.id]
+                );
+                teamId = memberRows[0]?.team_id;
+            }
 
             if (!teamId) {
                 // No team - return empty or just the current user
@@ -164,7 +173,16 @@ class UserController {
                 [req.user.id]
             );
 
-            const teamId = userRows[0]?.current_team_id;
+            let teamId = userRows[0]?.current_team_id;
+
+            if (!teamId) {
+                // FALLBACK: If current_team_id is null, check if they are a member of any team
+                const [memberRows] = await pool.query(
+                    `SELECT team_id FROM team_members WHERE user_id = ? LIMIT 1`,
+                    [req.user.id]
+                );
+                teamId = memberRows[0]?.team_id;
+            }
 
             if (!teamId) {
                 return res.status(200).json({
@@ -533,15 +551,35 @@ class UserController {
                 [req.user.id]
             );
 
-            const teamId = userRows[0]?.current_team_id;
+            console.log('[Birthday Debug] User ID:', req.user.id);
+            console.log('[Birthday Debug] User current_team_id:', userRows[0]?.current_team_id);
+
+            let teamId = userRows[0]?.current_team_id;
+
             if (!teamId) {
+                // FALLBACK: If current_team_id is null, check if they are a member of any team
+                const [memberRows] = await pool.query(
+                    `SELECT team_id FROM team_members WHERE user_id = ? LIMIT 1`,
+                    [req.user.id]
+                );
+                teamId = memberRows[0]?.team_id;
+                console.log('[Birthday Debug] Fallback team_id:', teamId);
+            }
+
+            if (!teamId) {
+                console.log('[Birthday Debug] No team found, returning empty');
                 return res.status(200).json({
                     success: true,
                     data: []
                 });
             }
 
-            const birthdays = await UserModel.getTodayBirthdays(teamId);
+            console.log('[Birthday Debug] Fetching birthdays for team:', teamId);
+            const timezone = req.query.tz || 'UTC';
+            console.log('[Birthday Debug] User timezone:', timezone);
+            const birthdays = await UserModel.getTodayBirthdays(teamId, timezone);
+            console.log('[Birthday Debug] Birthdays found:', birthdays.length, birthdays);
+
             res.status(200).json({
                 success: true,
                 data: birthdays

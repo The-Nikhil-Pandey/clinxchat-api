@@ -31,6 +31,7 @@ const teamRoutes = require('./routes/teamRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const channelRoutes = require('./routes/channelRoutes');
 const billingRoutes = require('./routes/billingRoutes');
+const blockRoutes = require('./routes/blockRoutes');
 
 const app = express();
 
@@ -101,6 +102,7 @@ app.use('/api/teams', teamRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/blocks', blockRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {

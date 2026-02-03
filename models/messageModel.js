@@ -36,7 +36,7 @@ class MessageModel {
     /**
      * Get messages for a chat with pagination
      */
-    static async findByChatId(chatId, userId, limit = 50, offset = 0) {
+    static async findByChatId(chatId, userId, limit = 50, offset = 0, exitedAt = null) {
         const [rows] = await pool.query(`
             SELECT m.*, u.name as sender_name, u.profile_picture as sender_picture
             FROM messages m
@@ -44,9 +44,10 @@ class MessageModel {
             WHERE m.chat_id = ? 
             AND m.is_deleted_everyone = FALSE
             AND NOT JSON_CONTAINS(COALESCE(m.deleted_for_users, '[]'), CAST(? AS JSON))
+            AND (m.created_at <= ? OR ? IS NULL)
             ORDER BY m.created_at DESC
             LIMIT ? OFFSET ?
-        `, [chatId, userId, limit, offset]);
+        `, [chatId, userId, exitedAt, exitedAt, limit, offset]);
         return rows.reverse(); // Return in chronological order
     }
 
@@ -171,14 +172,15 @@ class MessageModel {
     /**
      * Get media messages for a chat
      */
-    static async getMediaByChatId(chatId, type = null) {
+    static async getMediaByChatId(chatId, type = null, exitedAt = null) {
         let sql = `
             SELECT m.*, u.name as sender_name
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             WHERE m.chat_id = ? AND m.message_type != 'text'
+            AND (m.created_at <= ? OR ? IS NULL)
         `;
-        const params = [chatId];
+        const params = [chatId, exitedAt, exitedAt];
 
         if (type) {
             sql += ' AND m.message_type = ?';

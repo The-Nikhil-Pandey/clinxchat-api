@@ -1,6 +1,7 @@
 const ChatModel = require('../models/chatModel');
 const MessageModel = require('../models/messageModel');
 const UserModel = require('../models/userModel');
+const BlockModel = require('../models/blockModel');
 
 /**
  * Chat Controller - Handles chat and message operations
@@ -45,6 +46,9 @@ class ChatController {
                 });
             }
 
+            // Check block status
+            const blockStatus = await BlockModel.getBlockStatus(req.user.id, otherUserId);
+
             // Get or create chat
             const chatId = await ChatModel.getOrCreatePrivateChat(req.user.id, otherUserId);
 
@@ -69,7 +73,8 @@ class ChatController {
                 data: {
                     chatId,
                     participant: otherUser,
-                    messages
+                    messages,
+                    blockStatus
                 }
             });
         } catch (error) {
@@ -110,6 +115,19 @@ class ChatController {
                 return res.status(404).json({
                     success: false,
                     message: 'Receiver not found'
+                });
+            }
+
+            // Check block status - prevent sending if either has blocked
+            const blockStatus = await BlockModel.getBlockStatus(req.user.id, receiverId);
+            if (blockStatus.isBlocked) {
+                return res.status(403).json({
+                    success: false,
+                    message: blockStatus.blockedBy === 'me'
+                        ? 'You have blocked this user. Unblock to send messages.'
+                        : 'You cannot send messages to this user.',
+                    blocked: true,
+                    blockedBy: blockStatus.blockedBy
                 });
             }
 

@@ -78,8 +78,26 @@ class GroupController {
         try {
             const groupId = parseInt(req.params.id);
 
-            // Check if user is member
-            const membership = await GroupModel.isMember(groupId, req.user.id);
+            // Check if user is member OR was a member
+            let membership = await GroupModel.isMember(groupId, req.user.id);
+            let exitedAt = null;
+
+            if (!membership) {
+                // Check if they were a member (have a chat participant entry)
+                const chat = await ChatModel.findByGroupId(groupId);
+                if (chat) {
+                    const { pool } = require('../config/db');
+                    const [pRows] = await pool.query(
+                        'SELECT exited_at FROM chat_participants WHERE chat_id = ? AND user_id = ?',
+                        [chat.id, req.user.id]
+                    );
+                    if (pRows.length > 0) {
+                        membership = { role: 'member' }; // Minimal role for read-only access
+                        exitedAt = pRows[0].exited_at;
+                    }
+                }
+            }
+
             if (!membership) {
                 return res.status(403).json({
                     success: false,
@@ -104,7 +122,8 @@ class GroupController {
                     ...group,
                     members,
                     permissions,
-                    userRole: membership.role
+                    userRole: membership.role,
+                    exited_at: exitedAt
                 }
             });
         } catch (error) {
@@ -899,15 +918,6 @@ class GroupController {
     static async getGroupMedia(req, res) {
         try {
             const groupId = parseInt(req.params.groupId);
-
-            const membership = await GroupModel.isMember(groupId, req.user.id);
-            if (!membership) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'You are not a member of this group'
-                });
-            }
-
             const chat = await ChatModel.findByGroupId(groupId);
             if (!chat) {
                 return res.status(404).json({
@@ -916,8 +926,23 @@ class GroupController {
                 });
             }
 
+            // Check participation
+            const { pool } = require('../config/db');
+            const [pRows] = await pool.query(
+                'SELECT exited_at FROM chat_participants WHERE chat_id = ? AND user_id = ?',
+                [chat.id, req.user.id]
+            );
+
+            if (pRows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You are not a member of this group'
+                });
+            }
+
+            const exitedAt = pRows[0].exited_at;
             const type = req.query.type;
-            const media = await MessageModel.getMediaByChatId(chat.id, type);
+            const media = await MessageModel.getMediaByChatId(chat.id, type, exitedAt);
 
             res.status(200).json({
                 success: true,
@@ -1051,15 +1076,6 @@ class GroupController {
             const limit = parseInt(req.query.limit) || 50;
             const offset = parseInt(req.query.offset) || 0;
 
-            // Check membership
-            const membership = await GroupModel.isMember(groupId, req.user.id);
-            if (!membership) {
-                return res.status(403).json({
-                    success: false,
-                    message: 'You are not a member of this group'
-                });
-            }
-
             // Get group chat
             const chat = await ChatModel.findByGroupId(groupId);
             if (!chat) {
@@ -1069,8 +1085,24 @@ class GroupController {
                 });
             }
 
+            // Check participation (instead of just active membership)
+            const { pool } = require('../config/db');
+            const [participantRows] = await pool.query(
+                'SELECT exited_at FROM chat_participants WHERE chat_id = ? AND user_id = ?',
+                [chat.id, req.user.id]
+            );
+
+            if (participantRows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'You are not a member of this group'
+                });
+            }
+
+            const exitedAt = participantRows[0].exited_at;
+
             // Get messages
-            const messages = await MessageModel.findByChatId(chat.id, req.user.id, limit, offset);
+            const messages = await MessageModel.findByChatId(chat.id, req.user.id, limit, offset, exitedAt);
 
             res.status(200).json({
                 success: true,

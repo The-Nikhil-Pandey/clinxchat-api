@@ -345,19 +345,40 @@ class UserModel {
     }
 
     /**
-     * Get users with birthdays today
+     * Get users with birthdays today (using user's local timezone)
      */
-    static async getTodayBirthdays(teamId) {
+    static async getTodayBirthdays(teamId, timezone = 'UTC') {
+        // Get current date in user's timezone
+        const now = new Date();
+        const options = { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' };
+
+        let month, day;
+        try {
+            const formatter = new Intl.DateTimeFormat('en-US', options);
+            const parts = formatter.formatToParts(now);
+            month = parseInt(parts.find(p => p.type === 'month').value);
+            day = parseInt(parts.find(p => p.type === 'day').value);
+        } catch (e) {
+            // Fallback to UTC if timezone is invalid
+            month = now.getUTCMonth() + 1;
+            day = now.getUTCDate();
+        }
+
+        console.log('[Birthday Model Debug] Team ID:', teamId, 'Timezone:', timezone);
+        console.log('[Birthday Model Debug] Month:', month, 'Day:', day);
+
         const [rows] = await pool.query(
             `SELECT u.id, u.name, u.profile_picture, u.dob
              FROM users u
              JOIN team_members tm ON u.id = tm.user_id
              WHERE tm.team_id = ? 
              AND u.is_active = TRUE
-             AND MONTH(u.dob) = MONTH(CURRENT_DATE())
-             AND DAY(u.dob) = DAY(CURRENT_DATE())`,
-            [teamId]
+             AND MONTH(u.dob) = ?
+             AND DAY(u.dob) = ?`,
+            [teamId, month, day]
         );
+
+        console.log('[Birthday Model Debug] Query result:', rows);
         return rows;
     }
 }
